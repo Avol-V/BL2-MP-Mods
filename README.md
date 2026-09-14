@@ -1,6 +1,18 @@
 # Robeth's Borderlands Unlimited COOP Mod
 A tool to patch Borderlands 2 to support 5+ players in game
 
+## Current game version (SDK mod)
+The original patcher writes to fixed file offsets and broke with the October 2024 Borderlands 2 update. The `SDKMod/unlimited_coop` mod replaces it for the current game version without modifying or copying any game files.
+
+1. Install the [PythonSDK mod manager](https://github.com/bl-sdk/willow2-mod-manager).
+2. Download `unlimited_coop.sdkmod` from the [latest release](https://github.com/AstrandPallas/BL2-MP-Mods/releases/latest) and place it in the game's `sdk_mods` folder.
+3. Enable **Unlimited COOP** in the Mods menu. Only the host needs it.
+
+What it does:
+- Hooks `WillowCoopGameInfo.PickTeam` to give every player their own team, replacing the old `WillowGame.upk` bytecode edit.
+- Applies the enabled `set` commands and hotfixes from `cooppatch.txt` on the main menu and on every map change.
+
+## Legacy patcher
 The patcher might act like it's frozen after you press the patch button, but it's just making a copy of your entire Borderlands 2 folder for safety. The tool will place a patched verion of Borderlands 2 on your desktop that you need to run to use my COOP mod. To execute the COOP patch in game, press '~' and type exec cooppatch.txt.
 
 ## Thanks To
