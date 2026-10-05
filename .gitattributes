@@ -3,6 +3,12 @@
 ###############################################################################
 * text=auto
 
+# Preserve the exact patch payload checked by the SDK module's SHA256 guard.
+SDKMod/** text eol=lf
+SDKMod/unlimited_coop/cooppatch.txt -text
+*.md text eol=lf
+.github/workflows/*.yml text eol=lf
+
 ###############################################################################
 # Set default behavior for command prompt diff.
 #

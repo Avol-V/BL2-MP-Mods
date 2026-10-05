@@ -1,1 +1,1 @@
-The written installation guide can be found by [clicking here](https://steamcommunity.com/sharedfiles/filedetails/?id=1151711689). For additional support, join our [Discord server](https://discord.gg/p6CQ75F). Please make sure to read the rules and FAQ before asking any questions!
+For this SDK adaptation, start with README.md, docs/tools.md, and docs/testing.md. Report issues in this fork's issue tracker with build, SDK/mod versions, map, joining order, player count, and exact failure. Sanitize logs first. Historical patcher instructions do not describe SDK installation.

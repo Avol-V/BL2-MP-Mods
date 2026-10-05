@@ -249,3 +249,18 @@ node_modules
 **/package-lock.json
 **/yarn.lock
 dist/
+
+# SDK development and local game data
+__pycache__/
+*.py[cod]
+*.sdkmod
+sdk_mods/
+unlimited-coop-backups/
+unlimited-coop-logs/
+*.sav
+*.sav.bak
+profile.bin
+test-current/
+test-client-current/
+local/
+.launcher-fixture-*/
