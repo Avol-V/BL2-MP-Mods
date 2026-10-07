@@ -22,18 +22,33 @@ October 4, 2026: Windows host, BL2 Version 8639 / CL2863302 / build 257, Steam b
 
 Final restarted session on icecanyon_p: 35/39 command records read back, four pending, zero current errors, 13 registered hotfix records and 36 verified total service pairs. Counts came from the live GameInfo, excluding Default__ objects. Pending targets vary by map. Scalar readback is compared; structures are recorded without complete semantic comparison.
 
+## Version 1.2.0 (October 7, 2026)
+
+Same game and SDK builds, folder installation, host plus one client on a separate computer. Frame times were recorded in-game from PlayerTick intervals.
+
+| Scenario | Result |
+|---|---|
+| Main menu, 1.1.0 | 111 FPS, a 90–190 ms hitch every 2.0 s; none with the periodic pass disabled (117 FPS) |
+| Main menu, 1.2.0, 90 s | 117 FPS, no hitches, longest frame 15.5 ms |
+| Two players, icecanyon_p and SanctuaryAir_P | Players noticed no stutter; 117 FPS |
+| Client join during play | Readback errors found within a second, fixed 2 s later; PickTeam called |
+| Load from the menu, seamless travel to Interlude_P | Commands re-applied once per map change |
+| Steady state between triggers | No full passes; at most 0.4 ms of mod work per frame |
+
+A hitch of about 20 ms every 60 s remained with no mod work or Python GC inside it; it matches the engine's TimeBetweenPurgingPendingKillObjects=60 and was not measured without the mod.
+
 ## Known issues
 
-**One host restart froze when the first client joined.** Last sample: NumPlayers=2, EffectiveNumPlayers=2 instead of 4 (two records), AdjustedNetSpeed=7000 instead of 5000. Diagnostics stopped updating. Logs were preserved and the process stopped. A fresh run of the unchanged mod accepted all five. These mismatches do not establish the freeze cause. Short-lived readback errors also cleared on the next poll during successful play.
+**One host restart froze when the first client joined.** Last sample: NumPlayers=2, EffectiveNumPlayers=2 instead of 4 (two records), AdjustedNetSpeed=7000 instead of 5000. Diagnostics stopped updating. Logs were preserved and the process stopped. A fresh run of the unchanged mod accepted all five. These mismatches do not establish the freeze cause. Short-lived readback errors during successful play followed every join (EffectiveNumPlayers twice, AdjustedNetSpeed) or leave (one error), values the game recomputes, and cleared on the next poll.
 
 **Local multi-instance testing was abandoned.** Two copies crashed in bifrost.dll. A later attempt generated background SHiFT reconnections and a temporary restriction. SaveDataId did not prove separate profiles. Separate folders or LAN selection do not establish profile/account isolation. Real multiplayer testing used separate computers.
 
-- Five players tested; six or more, advertised 64/512 capacities, long-term stability, and interactions with other gameplay mods are untested.
+- Five players tested with 1.1.0, two with 1.2.0; six or more, advertised 64/512 capacities, long-term stability, and interactions with other gameplay mods are untested.
 - Five-player DLC play remains unverified; solo DLC loading does not substitute.
 - No unique Micropatch service means pending hotfix registration. Offline service creation was not implemented/verified. Do not repeatedly reconnect to force it.
 - Original Players=99 in one KillSkillDuration expression is retained; its gameplay implications were not independently validated.
 - Disabling needs a restart. Game copies share default saves/config; testing used disposable characters.
-- Public installer/launcher/package tools were prepared and checked offline after the game test. Runtime logic was imported without behavioral changes; the packed archive has not been tested in-game.
+- Public installer/launcher/package tools were prepared and checked offline after the game test. For 1.1.0, runtime logic was imported without behavioral changes; the packed archive has not been tested in-game.
 
 ## Reproduce/report
 

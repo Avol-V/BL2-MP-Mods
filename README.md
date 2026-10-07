@@ -1,6 +1,6 @@
 # Unlimited COOP for Borderlands 2 — SDK adaptation
 
-An experimental **host-only** adaptation of Robeth's Unlimited COOP, based on AstrandPallas's PythonSDK port. Version **1.1.0** was tested with **five real players on separate computers** on Borderlands 2 CL2863302. It uses runtime SDK hooks and preserves the original v0.18 cooppatch.txt; it does not patch game executables or UPK files.
+An experimental **host-only** adaptation of Robeth's Unlimited COOP, based on AstrandPallas's PythonSDK port. Version **1.1.0** was tested with **five real players on separate computers** on Borderlands 2 CL2863302. Version **1.2.0** only changes when settings are re-checked, removing a periodic host stutter, and was tested with two players. It uses runtime SDK hooks and preserves the original v0.18 cooppatch.txt; it does not patch game executables or UPK files.
 
 Five-player joining, map travel, damage, ally revival, the fifth player's active skill and item pickup, rejoining, and item persistence after restarting were confirmed on October 4, 2026. **One restart attempt froze when the first client joined; the next attempt succeeded without changing the mod. The cause remains unresolved.** Five-player DLC play is untested. See [test results](docs/testing.md).
 
@@ -40,6 +40,7 @@ Load a map before clients join. Connect progressively to two, four, then five pl
 
 - Retain AstrandPallas's PickTeam hook returning the requested team number.
 - Apply commands when targets are loaded, retry pending targets, and invalidate identities on map changes without retaining UObject references across GC.
+- Spread checks over frames: one target per frame, full passes only after map and player-count changes (a series over about a minute), and only unsettled targets retried every 2 s.
 - Register 13 enabled hotfix records by Micropatch service identity, preserve unrelated entries, reject conflicts/ambiguous services, and verify arrays.
 - Write readback, pending targets, live player counts, and hotfix status to sdk_mods/settings/unlimited_coop.runtime.json.
 - Add offline tests, portable install/rollback and launch tools, a reproducible package builder, and CI.
@@ -57,6 +58,6 @@ python SDKMod/tools/build_package.py
 
 CI runs offline tests and builds artifacts on Windows/Linux. It does not verify gameplay. Legacy patcher sources/history remain for reference; **do not apply their fixed offsets to current files**. [Historical README](docs/legacy-readme.md).
 
-Based on [RobChiocchio/BL2-MP-Mods](https://github.com/RobChiocchio/BL2-MP-Mods) and the SDK addition in [AstrandPallas/BL2-MP-Mods](https://github.com/AstrandPallas/BL2-MP-Mods), commit 9b2649ede66babe5a236dd59b0101c69da5e8b84. Runtime logic matches the tested local adaptation; public metadata/tools were prepared afterward. [Changelog](CHANGELOG.md).
+Based on [RobChiocchio/BL2-MP-Mods](https://github.com/RobChiocchio/BL2-MP-Mods) and the SDK addition in [AstrandPallas/BL2-MP-Mods](https://github.com/AstrandPallas/BL2-MP-Mods), commit 9b2649ede66babe5a236dd59b0101c69da5e8b84. Runtime logic matches the tested local adaptation except for the check scheduling changed in 1.2.0, which has only had a two-player test so far; public metadata/tools were prepared afterward. [Changelog](CHANGELOG.md).
 
 Licensed under the existing [GNU GPL v3](LICENSE). Credit to Robeth, AstrandPallas, the SDK maintainers, contributors listed in the historical README, and five-player test volunteers. This is an independent adaptation, not an official Gearbox release.

@@ -1,9 +1,9 @@
 [project]
 name = "unlimited_coop"
-version = "1.1.0"
+version = "1.2.0"
 authors = [{ name = "Robeth" }, { name = "AstrandPallas" }, { name = "Avol-V" }]
 description = """\
-Experimental host-only SDK adaptation of Robeth's Unlimited COOP. Five-player play has been tested on BL2 CL2863302. Applies loaded patch targets, retries pending objects, and verifies hotfix registration. Restart the game after disabling. See the repository for known issues and untested DLC scenarios.
+Experimental host-only SDK adaptation of Robeth's Unlimited COOP. Five-player play was tested with version 1.1.0 on BL2 CL2863302. Applies loaded patch targets, retries pending objects, and verifies hotfix registration. Restart the game after disabling. See the repository for known issues and untested DLC scenarios.
 """
 
 [project.urls]

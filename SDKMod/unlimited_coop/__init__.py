@@ -51,10 +51,27 @@ if hashlib.sha256(source).hexdigest() != SOURCE_SHA256:
     raise ValueError('Unexpected cooppatch.txt: review changes before enabling')
 RECORDS = parse_patch(source.decode('utf8'))
 COMMANDS = [f"set {r['target']} {r['prop']} {r['value']}" for r in RECORDS]
+# Record indices by target: a pass resolves each target once, not once per record.
+TARGETS = {t: [i for i, r in enumerate(RECORDS) if r['target'] == t] for t in dict.fromkeys(r['target'] for r in RECORDS)}
+CORE = {
+    'WillowCoopGameInfo': ('MaxPlayers', 'MaxPlayersAllowed', 'EffectiveNumPlayers', 'NumPlayers'),
+    'WillowOnlineGameSettings': ('NumPublicConnections', 'NumOpenPublicConnections'),
+}
+CHECK_INTERVAL = 2.0
+# Full passes after a trigger at 0, 2, 6, 14, 30 and 62 s, then none until the next trigger.
+FOLLOW_UP_MAX = 32.0
+# Map hooks this close together belong to one map change: only the first forgets applied identities.
+INVALIDATE_BURST = 10.0
 _seen = {}
 _rows = {}
+_core = {}
+_queue = []
 _next_check = 0.0
+_next_full = 0.0
+_full_delay = CHECK_INTERVAL
+_last_invalidate = float('-inf')
 _world = None
+_players = None
 _pick_calls = 0
 _last_summary = None
 _service_status = {'status': 'pending'}
@@ -120,33 +137,24 @@ def controller():
 
 
 def snapshot(pc):
+    """Write diagnostics when they change; core values come from the last full pass."""
     global _last_report
-    core = {}
-    for cls, props in {
-        'WillowCoopGameInfo': ('MaxPlayers', 'MaxPlayersAllowed', 'EffectiveNumPlayers', 'NumPlayers'),
-        'WillowOnlineGameSettings': ('NumPublicConnections', 'NumOpenPublicConnections'),
-    }.items():
-        core[cls] = [dict(path=o._path_name(), **{p: getattr(o, p) for p in props})
-                     for o in unrealsdk.find_all(cls, False)]
     report = dict(version=__version__, world=pc.WorldInfo._path_name(), map=pc.WorldInfo.GetMapName(True), net_mode=int(pc.WorldInfo.NetMode),
                   source_sha256=SOURCE_SHA256, pick_team_calls=_pick_calls,
-                  hotfix_service=_service_status, core=core, records=list(_rows.values()),
+                  hotfix_service=_service_status, core={cls: _core.get(cls, []) for cls in CORE},
+                  records=[_rows[i] for i in sorted(_rows)],
                   caveat='Pending targets are not applied. Readback is not a 5+ multiplayer test.')
-    serialized = json.dumps(report, indent=2)
-    if serialized == _last_report:
+    if report == _last_report:
         return
     dest = SETTINGS_DIR / 'unlimited_coop.runtime.json'
     temp = dest.with_suffix('.tmp')
-    temp.write_text(serialized, encoding='utf8')
+    temp.write_text(json.dumps(report, indent=2), encoding='utf8')
     temp.replace(dest)
-    _last_report = serialized
+    _last_report = report
 
 
-def apply_patch():
-    global _last_summary, _last_service_status, _service_status
-    pc = controller()
-    if pc is None:
-        return
+def apply_service(_pc):
+    global _last_service_status, _service_status
     try:
         register_hotfixes()
     except Exception as exc:
@@ -155,15 +163,33 @@ def apply_patch():
     if service_summary != _last_service_status:
         logging.info(f'Unlimited COOP hotfix service: {_service_status}')
         _last_service_status = service_summary
-    for index, record in enumerate(RECORDS):
-        target, prop, value = record['target'], record['prop'], record['value']
+
+
+def fail(target, status, exc):
+    for index in TARGETS[target]:
+        record = RECORDS[index]
+        _rows[index] = dict(target=target, prop=record['prop'], hotfix=record['hotfix'], status=status, detail=str(exc))
+        _seen.pop(index, None)
+    _core.pop(target, None)
+
+
+def apply_target(pc, target):
+    """Resolve one target (a full GObjects scan for classes), then apply and read back its records."""
+    try:
+        objects = resolve(target)
+        if not objects:
+            raise ValueError('No loaded instances')
+        # Do not retain UObject references across map unload/GC.
+        identities = tuple((o._path_name(), o._get_address(), o.InternalIndex) for o in objects)
+    except ValueError as exc:
+        return fail(target, 'pending', exc)
+    except Exception as exc:
+        return fail(target, 'error', exc)
+    for index in TARGETS[target]:
+        record = RECORDS[index]
+        prop, value = record['prop'], record['value']
         row = dict(target=target, prop=prop, hotfix=record['hotfix'])
         try:
-            objects = resolve(target)
-            if not objects:
-                raise ValueError('No loaded instances')
-            # Do not retain UObject references across map unload/GC.
-            identities = tuple((o._path_name(), o._get_address(), o.InternalIndex) for o in objects)
             if _seen.get(index) != identities:
                 for obj in objects:
                     getattr(obj, prop)  # validate the property before invoking the engine parser
@@ -189,11 +215,63 @@ def apply_patch():
             row.update(status='error', detail=str(exc))
             _seen.pop(index, None)
         _rows[index] = row
+    if target in CORE:
+        _core[target] = [dict(path=o._path_name(), **{p: getattr(o, p) for p in CORE[target]}) for o in objects]
+
+
+def report(pc):
+    global _last_summary
     summary = tuple(sum(r['status'] == s for r in _rows.values()) for s in ('read_back','pending','error'))
     if summary != _last_summary:
         logging.info(f'Unlimited COOP: read back {summary[0]}/{len(RECORDS)}, pending {summary[1]}, errors {summary[2]}. Details: settings/unlimited_coop.runtime.json')
         _last_summary = summary
     snapshot(pc)
+
+
+def pass_steps(full):
+    """A full pass covers every target; otherwise only targets not yet read back (cheap object lookups)."""
+    targets = [t for t, indices in TARGETS.items()
+               if full or any(_rows.get(i, {}).get('status') != 'read_back' for i in indices)]
+    service = full or _service_status.get('status') != 'registered'
+    return ([(apply_service,)] if service else []) + [(apply_target, t) for t in targets] + [(report,)]
+
+
+def run_step(pc, step):
+    step[0](pc, *step[1:])
+
+
+def apply_patch():
+    """Run a full pass at once (diagnostic scripts); the tick hook spreads passes over frames."""
+    pc = controller()
+    if pc is None:
+        return
+    for step in pass_steps(True):
+        run_step(pc, step)
+
+
+def start_pass(pc):
+    """Queue the next pass. Full passes only follow triggers, at growing intervals; the rest are light.
+
+    Triggers are map changes and player-count changes. In a five-player session every readback
+    error (EffectiveNumPlayers, AdjustedNetSpeed recomputed by the game) followed a join or leave.
+    """
+    global _next_check, _next_full, _full_delay, _world, _players
+    world = (pc.WorldInfo._path_name(), pc.WorldInfo._get_address(), pc.WorldInfo.GetMapName(True))
+    game = pc.WorldInfo.Game
+    players = None if game is None else game.NumPlayers
+    if world != _world:
+        _world = world
+        invalidate()
+    if players != _players:  # a join or leave brings new instances and recomputed net speeds
+        _players = players
+        _next_full, _full_delay = 0.0, CHECK_INTERVAL
+    now = time.monotonic()
+    _next_check = now + CHECK_INTERVAL
+    full = now >= _next_full
+    if full:
+        _next_full = now + _full_delay if _full_delay <= FOLLOW_UP_MAX else float('inf')
+        _full_delay *= 2
+    _queue[:] = pass_steps(full)
 
 
 @hook('WillowGame.WillowCoopGameInfo:PickTeam')
@@ -206,9 +284,16 @@ def pick_team(obj, args, _ret, _func):
 
 
 def invalidate(*_):
-    global _next_check
-    _seen.clear()
-    _next_check = 0.0
+    """Restart full passes. Seamless travel fires several map hooks within seconds; forgetting
+    applied identities once per burst keeps unchanged objects from being re-applied each time."""
+    global _next_check, _next_full, _full_delay, _last_invalidate
+    now = time.monotonic()
+    if now - _last_invalidate > INVALIDATE_BURST:
+        _seen.clear()
+    _last_invalidate = now
+    _queue.clear()
+    _next_check = _next_full = 0.0
+    _full_delay = CHECK_INTERVAL
 
 
 @hook('Engine.GameInfo:PostCommitMapChange', Type.POST)
@@ -220,19 +305,15 @@ def map_ready(*_):
 
 @hook('Engine.PlayerController:PlayerTick', Type.POST)
 def tick(obj, _args, _ret, _func):
-    global _next_check, _world
-    now = time.monotonic()
-    if now < _next_check:
+    # One step per frame: a whole pass in one frame stalled the game thread for ~100 ms every 2 s.
+    if not _queue and time.monotonic() < _next_check:
         return
-    _next_check = now + 2.0
     pc = controller()
     if pc is None or obj != pc:
         return
-    world = (pc.WorldInfo._path_name(), pc.WorldInfo._get_address(), pc.WorldInfo.GetMapName(True))
-    if world != _world:
-        _world = world
-        _seen.clear()
-    apply_patch()
+    if not _queue:
+        start_pass(pc)
+    run_step(pc, _queue.pop(0))
 
 
 mod = build_mod(cls=RestartToDisable, hooks=[pick_team, map_ready, tick], on_enable=invalidate)
