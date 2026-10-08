@@ -127,9 +127,11 @@ class PackageTests(unittest.TestCase):
         # unless it holds exactly one root entry named like the archive without its extension.
         with tempfile.TemporaryDirectory() as output:
             path = Path(output) / builder.build(output)['archive']
-            roots = list(zipfile.Path(path).iterdir())
-            self.assertEqual([root.name for root in roots], [path.stem])
-            self.assertTrue(roots[0].is_dir())
+            # Close the archive before cleanup: Windows cannot delete a file that is still open.
+            with zipfile.ZipFile(path) as archive:
+                roots = list(zipfile.Path(archive).iterdir())
+                self.assertEqual([root.name for root in roots], [path.stem])
+                self.assertTrue(roots[0].is_dir())
 
 
 if __name__ == '__main__':
