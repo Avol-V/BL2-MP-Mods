@@ -87,8 +87,14 @@ class SchedulingTests(unittest.TestCase):
 
         def register_hotfixes():
             ns['_service_status'] = dict(status='registered')
+
+        self.teams = []
+
+        def apply_teams(pc):  # team assignment itself is covered by test_teams
+            self.teams.append(pc)
         ns.update(time=SimpleNamespace(monotonic=lambda: self.clock[0]), resolve=resolve,
-                  controller=lambda: self.pc, register_hotfixes=register_hotfixes, SETTINGS_DIR=Path(tmp.name))
+                  controller=lambda: self.pc, register_hotfixes=register_hotfixes, apply_teams=apply_teams,
+                  SETTINGS_DIR=Path(tmp.name))
 
     def test_targets_group_every_record_once(self):
         records = load()['parse_patch']((source/'cooppatch.txt').read_text())
@@ -111,6 +117,8 @@ class SchedulingTests(unittest.TestCase):
         tick = self.ns['tick']
         tick(self.pc, None, None, None)
         self.assertEqual(self.resolved, [], 'the first step is the hotfix service')
+        tick(self.pc, None, None, None)
+        self.assertEqual((self.resolved, self.teams), ([], [self.pc]), 'then teams')
         for expected in (['GameInfo'], ['GameInfo', 'WillowCoopGameInfo'],
                          ['GameInfo', 'WillowCoopGameInfo', 'GD_Late.Formula']):
             tick(self.pc, None, None, None)
@@ -125,7 +133,7 @@ class SchedulingTests(unittest.TestCase):
         tick(Controller(), None, None, None)
         self.assertEqual(self.ns['_queue'], [], 'a remote controller must not start or consume a pass')
         tick(self.pc, None, None, None)
-        self.assertEqual(len(self.ns['_queue']), 4, 'second full pass, service step done')
+        self.assertEqual(len(self.ns['_queue']), 5, 'second full pass, service step done')
 
     def start(self, second):
         self.clock[0] = 100.0 + second
@@ -142,7 +150,8 @@ class SchedulingTests(unittest.TestCase):
             if 'GameInfo' in steps:
                 full.append(second)
             else:
-                self.assertEqual(steps, ['GD_Late.Formula', 'report'], 'light pass: unsettled targets only')
+                self.assertEqual(steps, ['apply_teams', 'GD_Late.Formula', 'report'],
+                                 'light pass: teams and unsettled targets only')
         self.assertEqual(full, [0, 2, 6, 14, 30, 62], 'no periodic full passes without a trigger')
 
     def test_triggers_restart_full_passes(self):

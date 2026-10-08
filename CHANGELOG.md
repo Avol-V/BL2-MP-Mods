@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.0 — unreleased
+
+Restores the HUD ally panel. Patch data and hotfix registration are unchanged. Tested with two players: the ally panel appears for both on join and survives travel, option switches, and a rejoin. More than two players, including squads, are untested.
+
+- The panel shows only teammates. Up to 1.2.0 the PickTeam hook returned the requested team number, 255 (no team) in practice: the host stayed alone in team 0 (they join before the mod's hooks) and clients had no team, so no player saw anyone in the panel.
+- Up to four players now share team 0, as in the unmodified game. The panel caches three allies and the game writes past them without a bounds check, so five players in one team would corrupt memory on every machine, including clients without the mod. No team ever holds more than four players: players leave teams before others join, and a join waits until the team has room.
+- Above four players, the new **Teams above four players** option chooses between **Squads of 4** (default): every next four players get their own team (2, 3, …; team 1 is the game's AI team) and see their own squad, and **No teams**: everyone leaves their team, as before. Squads stay together when players leave; with four or fewer players left, everyone shares team 0 again.
+- Teams are checked on every pass (2 s) and on every join; squad teams are recreated after seamless travel. Team sizes, without player names, are written to the runtime diagnostics and the SDK log.
+- Checked with two players by moving them between teams with a probe, not with this code: the panel appears for both players in a shared team, including a new team 2, and survives fast travel; players in different teams cannot damage each other; enemy damage, revival, and entering each other's vehicles do not depend on teams.
+
 ## 1.2.0 — October 7, 2026
 
 Removes a periodic host stutter. Patch data and hotfix registration are unchanged.

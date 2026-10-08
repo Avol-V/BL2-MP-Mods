@@ -1,6 +1,6 @@
 # Unlimited COOP for Borderlands 2 — SDK adaptation
 
-An experimental **host-only** adaptation of Robeth's Unlimited COOP, based on AstrandPallas's PythonSDK port. Version **1.1.0** was tested with **five real players on separate computers** on Borderlands 2 CL2863302. Version **1.2.0** only changes when settings are re-checked, removing a periodic host stutter, and was tested with two players. It uses runtime SDK hooks and preserves the original v0.18 cooppatch.txt; it does not patch game executables or UPK files.
+An experimental **host-only** adaptation of Robeth's Unlimited COOP, based on AstrandPallas's PythonSDK port. Version **1.1.0** was tested with **five real players on separate computers** on Borderlands 2 CL2863302. Version **1.2.0** only changes when settings are re-checked, removing a periodic host stutter, and was tested with two players. Version **1.3.0** assigns players to teams of up to four so the stock ally panel works; it was tested with two players, squads above four players are untested. It uses runtime SDK hooks and preserves the original v0.18 cooppatch.txt; it does not patch game executables or UPK files.
 
 Five-player joining, map travel, damage, ally revival, the fifth player's active skill and item pickup, rejoining, and item persistence after restarting were confirmed on October 4, 2026. **One restart attempt froze when the first client joined; the next attempt succeeded without changing the mod. The cause remains unresolved.** Five-player DLC play is untested. See [test results](docs/testing.md).
 
@@ -34,11 +34,15 @@ Optional fullscreen launch:
 
 It uses your configured resolution, opens no debug console, and exits immediately after starting the game. Omit -Launch to inspect the plan. Language is not forced; optionally pass -Language rus or another installed three-letter code. [Tools and rollback](docs/tools.md).
 
-Load a map before clients join. Connect progressively to two, four, then five players; the fifth joins from the main menu into the loaded map. The stock lobby/HUD still has four slots; use actual participants/live game counts to verify joining. Disabling the mod requires a full game restart because applied runtime settings are not automatically reverted.
+Load a map before clients join. Connect progressively to two, four, then five players; the fifth joins from the main menu into the loaded map. The stock lobby still has four slots; use actual participants/live game counts to verify joining.
+
+The HUD ally panel shows up to three teammates. Up to four players share one team, as in the unmodified game. Above four, the **Teams above four players** option in the Mods menu either forms squads of four (default: each player sees their own squad) or leaves everyone without a team, as before 1.3.0 (no ally panel). Name tags above players broke when a fifth player joined in the five-player test; see [known issues](docs/testing.md).
+
+Disabling the mod requires a full game restart because applied runtime settings are not automatically reverted.
 
 ## Changes
 
-- Retain AstrandPallas's PickTeam hook returning the requested team number.
+- Assign teams through AstrandPallas's PickTeam hook: up to four players share team 0 as in the unmodified game; above four, squads of four or no teams (option). The ally panel has three slots and the game does not bounds-check them, so no team ever holds more than four players, even while players are moved between teams.
 - Apply commands when targets are loaded, retry pending targets, and invalidate identities on map changes without retaining UObject references across GC.
 - Spread checks over frames: one target per frame, full passes only after map and player-count changes (a series over about a minute), and only unsettled targets retried every 2 s.
 - Register 13 enabled hotfix records by Micropatch service identity, preserve unrelated entries, reject conflicts/ambiguous services, and verify arrays.
