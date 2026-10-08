@@ -1,9 +1,9 @@
 [project]
 name = "unlimited_coop"
-version = "1.4.0"
+version = "1.5.0"
 authors = [{ name = "Robeth" }, { name = "AstrandPallas" }, { name = "Avol-V" }]
 description = """\
-Experimental host-only SDK adaptation of Robeth's Unlimited COOP. Five-player play was tested with version 1.1.0 on BL2 CL2863302. Applies loaded patch targets, retries pending objects, verifies hotfix registration, and assigns teams of up to four so the ally panel works. Optional vehicle tweaks from NoCap, off by default. Restart the game after disabling. See the repository for known issues and untested DLC scenarios.
+Experimental host-only SDK adaptation of Robeth's Unlimited COOP. Five-player play was tested with version 1.1.0 on BL2 CL2863302. Up to four players the game is balanced as without the mod; above four, enemies get tougher per player (option) and dens can spawn more enemies (option, off by default). Assigns teams of up to four so the ally panel works. Optional vehicle tweaks from NoCap, off by default. Restart the game after disabling. See the repository for known issues and untested DLC scenarios.
 """
 
 [project.urls]

@@ -68,9 +68,8 @@ class OptionTests(unittest.TestCase):
     def test_options_are_off_by_default(self):
         options = {node.targets[0].id: node.value for node in tree.body if isinstance(node, ast.Assign)
                    and isinstance(node.value, ast.Call) and getattr(node.value.func, 'id', None) == 'BoolOption'}
-        self.assertEqual(set(options), {'stand_on_vehicles', 'any_vehicle_station'})
-        for name, call in options.items():
-            self.assertIs(ast.literal_eval(call.args[1]), False, name)
+        for name in ('stand_on_vehicles', 'any_vehicle_station'):
+            self.assertIs(ast.literal_eval(options[name].args[1]), False, name)
 
     def test_tweaks_leave_unlocks_and_previews_alone(self):
         tweaks = load()['VEHICLE_TWEAKS']

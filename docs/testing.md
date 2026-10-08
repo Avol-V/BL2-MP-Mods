@@ -73,9 +73,30 @@ Same game and SDK builds, folder installation unless noted, a disposable level 3
 
 Not tested: more than two players, real squads (five or more), DLC stations with the vehicle options, NoCap's issue #1 (lost controls after a "no vehicles" message at a DLC station).
 
+## Version 1.5.0 (October 8, 2026)
+
+Same game and SDK builds, folder installation, a disposable level 30 character in the first playthrough, maps Three Horns Divide (Ice_P) and Sanctuary. Values were read in game by a probe that evaluates the balance tables natively (AttributeInitializationDefinition.EvaluateInitializationData, the player controller as context, so a normal enemy). More than two players were simulated: the probe replaced the mod's player count, so the mod counted five, six or eight players while EffectiveNumPlayers and the tables followed.
+
+| Scenario | Result |
+|---|---|
+| Alone, title screen and Ice_P | EffectiveNumPlayers 1; stock tables (enemy health 1.0, damage 0.65, gun damage 0.8); experience and kill skill rows stock, 64 rows; fast travel countdown 5 s; network values stock on the live net drivers |
+| Counted five, alone | EffectiveNumPlayers 4; enemy health 2.05, damage 1.41, gun damage 1.65, shields 1.3, enemy vehicles 1.28, badass weight 3.0, boss weight 4; den formulas at their four-player values (More enemies off); network block on |
+| Counted eight, strength 50%, More enemies on | Health 2.35, damage 1.60, gun damage 1.90, shields 1.6, vehicles 1.36, badass 3.5, bosses 5; den formulas: 6 and 7 extra enemies, linear formulas 7 (N − 1) and 2.75 (0.25 N + 0.75) |
+| Back to one counted player | Every table and network value back to stock; nothing left in the diagnostics |
+| Counted five, fast travel to Sanctuary and back | Tables loaded on each map continued again after loading, including tables reloaded with stock values |
+| Instant fast travel on and off | Countdown 0 on both GlobalsDefinition objects, then their own stock values (3 for the class default, 5 for GD_Globals); travel started at once |
+| Kill skill, alone | DurationOfLastKillSkillActivation 7 (the stock one-player row; the original patch set 1). With the mod counting five (EffectiveNumPlayers 4, one real player): 10, so the game picks the row by EffectiveNumPlayers |
+| Two players: join, leave | EffectiveNumPlayers 2 at once on join and 1 at once on leave, set by the hooks (no pass had to fix it); both in team 0; stock two-player tables (health 1.2, damage 0.9, shields 1.1, badass 1.5) |
+| Two players, mod counting five | Network block on the live net drivers (tick rate 20, client rates 7000/10000, timeouts 300/120) and on both existing PRIs (update frequency 20); the client noticed no disconnect or stutter while moving and shooting; switched back without disconnect. The client's net speed stayed 10000 both ways: the game only calls SetNetSpeed when its computed per-player rate changes, and that stays 7000 |
+| Ini files | Up to 1.4.0 the network values had been saved into the user's WillowEngine.ini and WillowGame.ini. With 1.5.0 the files were rewritten by the game on exit with identical content. With those files 1.5.0 kept the stock values in memory up to four players; after restoring the files the game itself loads the stock values, and bClampListenServerTickRate is False without its line |
+
+Not tested: more than two real players, enemies actually spawned above four players (health bars, den counts, missions with More enemies), UVHM (by the game data the stock playthrough attribute does not count a third playthrough, so UVHM takes the second-playthrough branches), DLC tables (witch doctors, Son of Crawmerax, wedding badasses, summoners: not loaded on the tested maps).
+
 ## Known issues
 
-**One host restart froze when the first client joined.** Last sample: NumPlayers=2, EffectiveNumPlayers=2 instead of 4 (two records), AdjustedNetSpeed=7000 instead of 5000. Diagnostics stopped updating. Logs were preserved and the process stopped. A fresh run of the unchanged mod accepted all five. These mismatches do not establish the freeze cause. Short-lived readback errors during successful play followed every join (EffectiveNumPlayers twice, AdjustedNetSpeed) or leave (one error), values the game recomputes, and cleared on the next poll.
+**One host restart froze when the first client joined.** Last sample: NumPlayers=2, EffectiveNumPlayers=2 instead of 4 (two records), AdjustedNetSpeed=7000 instead of 5000. Diagnostics stopped updating. Logs were preserved and the process stopped. A fresh run of the unchanged mod accepted all five. These mismatches do not establish the freeze cause. Short-lived readback errors during successful play followed every join (EffectiveNumPlayers twice, AdjustedNetSpeed) or leave (one error), values the game recomputes, and cleared on the next poll. Since 1.5.0 EffectiveNumPlayers=2 with two players is intended and AdjustedNetSpeed is not set.
+
+**Up to 1.4.0 the network values were saved to the game's ini files** (WillowEngine.ini, WillowGame.ini in the user's documents), as running the original cooppatch.txt does: the console command set saves config properties. The game kept them without the mod and in other installations sharing the same documents folder. 1.5.0 saves nothing and ignores these values up to four players; the README lists the stock values to restore the files.
 
 **Local multi-instance testing was abandoned.** Two copies crashed in bifrost.dll. A later attempt generated background SHiFT reconnections and a temporary restriction. SaveDataId did not prove separate profiles. Separate folders or LAN selection do not establish profile/account isolation. Real multiplayer testing used separate computers.
 
@@ -83,10 +104,11 @@ Not tested: more than two players, real squads (five or more), DLC stations with
 
 **No ally panel up to 1.2.0.** The HUD panel only shows teammates, and these versions left the host alone in team 0 and clients without a team. 1.3.0 assigns teams; tested with two players.
 
-- Five players tested with 1.1.0, two with 1.2.0 to 1.4.0; six or more, advertised 64/512 capacities, long-term stability, and interactions with other gameplay mods are untested.
+- Five players tested with 1.1.0, two with 1.2.0 to 1.5.0; six or more, advertised 64/512 capacities, long-term stability, and interactions with other gameplay mods are untested.
 - Five-player DLC play remains unverified; solo DLC loading does not substitute.
-- No unique Micropatch service means pending hotfix registration. Offline service creation was not implemented/verified. Do not repeatedly reconnect to force it.
-- Original Players=99 in one KillSkillDuration expression is retained; its gameplay implications were not independently validated.
+- The balance above four players (tougher and more enemies) was checked by values only, with the mod counting more players than were present; how it plays with five or more players is untested.
+- Up to 1.4.0, without a unique Micropatch service hotfix registration stayed pending. 1.5.0 registers no hotfixes.
+- Up to 1.4.0 the original Players=99 in one KillSkillDuration row was retained and kill skills lasted 1 s. 1.5.0 writes the stock rows.
 - Disabling needs a restart. Game copies share default saves/config; testing used disposable characters.
 - Public installer/launcher/package tools were prepared and checked offline after the game test. For 1.1.0, runtime logic was imported without behavioral changes. Up to 1.3.0 the packed archive was named unlimited_coop-<version>.sdkmod and the SDK ignored it; since 1.4.0 it loads, tested alone.
 
