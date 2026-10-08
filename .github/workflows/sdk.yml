@@ -21,4 +21,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: unlimited-coop-sdk-${{ matrix.os }}
-          path: SDKMod/dist/*
+          path: |
+            SDKMod/dist/unlimited_coop.sdkmod
+            SDKMod/dist/manifest.json
+          if-no-files-found: error

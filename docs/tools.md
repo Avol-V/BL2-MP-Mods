@@ -4,7 +4,7 @@ Tools accept an explicit game directory, with no developer-specific paths or fix
 
 ## Installer
 
-Requires Python 3.11+. Folder deployment is the tested format.
+Requires Python 3.11+. Folder deployment is the format used in multiplayer tests.
 
 ```powershell
 python SDKMod/tools/install.py --game-dir "E:\Games\Borderlands 2" --enable
@@ -49,4 +49,4 @@ Normal launch has no -log, -ABSLOG, -windowed, or forced resolution. Internal ga
 python SDKMod/tools/build_package.py
 ```
 
-Version is read from pyproject.toml. SDKMod/dist contains a reproducible archive and checksum manifest, ignored by Git. Only source/license files are included. The archive has not been tested in-game; use the folder for tested deployment.
+SDKMod/dist contains a reproducible unlimited_coop.sdkmod and a checksum manifest, ignored by Git. Only source/license files are included. The SDK imports a .sdkmod only if its single root folder has the archive's name, so the version is not in the file name: it is read from pyproject.toml into the manifest. Copy only the archive into <game>/sdk_mods without renaming it, and remove the folder installation first; the installer refuses to install the folder next to an unlimited_coop*.sdkmod. The archive alone was loaded in-game with 1.4.0; multiplayer tests used the folder.

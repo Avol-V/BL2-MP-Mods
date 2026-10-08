@@ -8,7 +8,7 @@ from types import SimpleNamespace
 source = Path(__file__).resolve().parents[1] / 'unlimited_coop'
 tree = ast.parse((source/'__init__.py').read_text())
 FUNCTIONS = ('plan_teams', 'team_sizes', 'team_index', 'is_player', 'player_pris', 'ensure_team', 'needs_move',
-             'apply_teams', 'pick_team')
+             'apply_teams', 'pick_team', 'initialize_teams')
 CONSTANTS = ('TEAM_LIMIT', 'AI_TEAM', 'NO_TEAM', 'SQUADS', 'UNGROUPED', 'CHECK_INTERVAL')
 chosen = []
 for node in tree.body:
@@ -41,18 +41,25 @@ class PRI:
 
 
 class Game:
-    """WillowCoopGameInfo team code as decompiled; records the fullest team after every change."""
+    """WillowCoopGameInfo team code as decompiled; records the fullest team after every change.
 
-    def __init__(self):
+    initialize_teams: a POST hook on InitializeTeams, as the mod installs it.
+    """
+
+    def __init__(self, initialize_teams=None):
         self.Teams = []
         self.GameReplicationInfo = SimpleNamespace(PRIArray=[])
         self.WorldInfo = SimpleNamespace(NetMode=2)
         self.peak = 0
+        self.changes = 0
+        self.hook = initialize_teams
         self.InitializeTeams()
 
     def InitializeTeams(self):
         self.CreateTeam(0, 'Players')
         self.CreateTeam(1, 'AI')
+        if self.hook is not None:
+            self.hook(self, None, None, None)
 
     def CreateTeam(self, index, name):
         while len(self.Teams) <= index:  # UnrealScript grows the array on assignment
@@ -60,6 +67,7 @@ class Game:
         self.Teams[index] = Team(index, name)
 
     def ChangeTeam(self, other, n, _new):
+        self.changes += 1
         if len(self.Teams) < 2:
             self.InitializeTeams()
         pri = other.PlayerReplicationInfo
@@ -72,12 +80,40 @@ class Game:
         if n != 255 and ok:
             pri.Team = self.Teams[n]
             pri.Team.Size += 1
+        self.record_peak()
+        return ok
+
+    def record_peak(self):
+        """The HUD compares team indices, not team objects: a stale team counts as its index."""
         counts = {}
         for p in self.GameReplicationInfo.PRIArray:
             if p.Team is not None:
                 counts[p.Team.TeamIndex] = counts.get(p.Team.TeamIndex, 0) + 1
         self.peak = max([self.peak, *counts.values()])
-        return ok
+
+    def HandleSeamlessTravelPlayer(self, other):
+        pri = other.PlayerReplicationInfo
+        old = pri.Team
+        if old is not None and old.TeamIndex < len(self.Teams) and self.Teams[old.TeamIndex] is not old:
+            new = self.Teams[old.TeamIndex]
+            if old.Size <= 1:
+                old.destroyed = True  # Destroy(); the PRI keeps pointing at it until AddToTeam
+            else:
+                old.Size -= 1  # RemoveFromTeam
+                pri.Team = None
+            if new is not None:  # AddToTeam; on none it is an "Accessed None" no-op
+                new.Size += 1
+                pri.Team = new
+        self.record_peak()
+
+    def seamless_travel(self, initialize_teams=None):
+        """The new GameInfo's PostSeamlessTravel: InitializeTeams, then HandleSeamlessTravelPlayer for
+        every player. PRIs travel with their old team objects; the new GRI collects them."""
+        new = Game(initialize_teams)
+        new.GameReplicationInfo.PRIArray = list(self.GameReplicationInfo.PRIArray)
+        for pri in new.GameReplicationInfo.PRIArray:
+            new.HandleSeamlessTravelPlayer(pri.Owner)
+        return new
 
     def join(self, index):
         """Login: PickTeam result, then a new PRI and ChangeTeam."""
@@ -109,6 +145,10 @@ def session(ns, players):
     for _ in range(players):
         game.join(pick(ns, game)[1])
     return game
+
+
+def apply(ns, game):
+    ns['apply_teams'](SimpleNamespace(WorldInfo=SimpleNamespace(Game=game)))
 
 
 class PlanTests(unittest.TestCase):
@@ -241,6 +281,99 @@ class ApplyTests(unittest.TestCase):
         game.GameReplicationInfo = None
         self.assertEqual(pick(ns, game), (BLOCK, 255), 'an error falls back to no team')
         self.assertEqual(len(ns['errors']), 1)
+
+
+class TravelTests(unittest.TestCase):
+    """WillowCoopGameInfo.PostSeamlessTravel: InitializeTeams, then HandleSeamlessTravelPlayer per player."""
+
+    def squads(self, ns, players):
+        game = session(ns, players)
+        apply(ns, game)  # a pass remembers the squad teams in use
+        return game
+
+    def assert_moved(self, game):
+        pris = game.GameReplicationInfo.PRIArray
+        for pri in pris:
+            self.assertIs(pri.Team, game.Teams[pri.Team.TeamIndex], 'on a team of the new GameInfo')
+        for team in game.Teams:
+            self.assertEqual(team.Size, sum(p.Team is team for p in pris), 'team size')
+
+    def test_without_the_hook_squads_stay_on_old_teams(self):
+        ns = load('Squads of 4')
+        old = self.squads(ns, 9)
+        new = old.seamless_travel()  # up to 1.3.0
+        pris = new.GameReplicationInfo.PRIArray
+        self.assertEqual([p.Team in new.Teams for p in pris], [True] * 4 + [False] * 5)
+        apply(ns, new)
+        self.assert_moved(new)
+        self.assertEqual(new.changes, 5, 'apply_teams moved the squads, up to 2 s later')
+        self.assertLessEqual(new.peak, 4)
+
+    def test_with_the_hook_the_game_moves_squads(self):
+        ns = load('Squads of 4')
+        old = self.squads(ns, 9)
+        new = old.seamless_travel(ns['initialize_teams'])
+        self.assert_moved(new)
+        self.assertEqual(new.indices(), [0] * 4 + [2] * 4 + [3])
+        self.assertEqual([t.Size for t in new.Teams], [4, 0, 4, 1])
+        self.assertEqual([getattr(t, 'destroyed', False) for t in old.Teams], [True, False, True, True])
+        self.assertLessEqual(new.peak, 4)
+        apply(ns, new)
+        self.assertEqual(new.changes, 0, 'nothing left for apply_teams')
+
+    def test_a_join_since_the_last_pass_is_remembered(self):
+        ns = load('Squads of 4')
+        old = session(ns, 5)  # the fifth joined through PickTeam, no pass before travel
+        new = old.seamless_travel(ns['initialize_teams'])
+        self.assert_moved(new)
+        self.assertEqual(new.indices(), [0] * 4 + [2])
+
+    def test_no_gap_below_a_squad(self):
+        ns = load('Squads of 4')
+        old = self.squads(ns, 9)
+        del old.GameReplicationInfo.PRIArray[4:8]  # squad 2 leaves, squad 3 stays together
+        apply(ns, old)
+        self.assertEqual(old.indices(), [0] * 4 + [3])
+        new = old.seamless_travel(ns['initialize_teams'])
+        self.assertIsNotNone(new.Teams[2], 'without team 2 the game would drop squad 3 from its team')
+        self.assert_moved(new)
+        self.assertEqual(new.indices(), [0] * 4 + [3])
+
+    def test_squads_through_several_travels_and_joins(self):
+        ns = load('Squads of 4')
+        game = self.squads(ns, 6)
+        for players in (7, 9, 10, 8):
+            game = game.seamless_travel(ns['initialize_teams'])
+            self.assert_moved(game)
+            self.assertLessEqual(game.peak, 4)
+            pris = game.GameReplicationInfo.PRIArray
+            while len(pris) > players:
+                del pris[1]
+            while len(pris) < players:
+                game.join(pick(ns, game)[1])
+            apply(ns, game)
+            apply(ns, game)
+            self.assertLessEqual(game.peak, 4)
+            self.assertTrue(all(game.indices().count(i) <= 4 for i in game.indices()))
+
+    def test_nothing_created_without_squads(self):
+        for mode, players in (('Squads of 4', 4), ('No teams', 6)):
+            ns = load(mode)
+            old = self.squads(ns, players)
+            new = old.seamless_travel(ns['initialize_teams'])
+            self.assertEqual(len(new.Teams), 2, mode)
+
+    def test_hook_guards(self):
+        ns = load('Squads of 4')
+        ns['_squad_teams'] = {2}
+        game = Game()
+        game.WorldInfo.NetMode = 3
+        ns['initialize_teams'](game, None, None, None)
+        self.assertEqual(len(game.Teams), 2, 'clients have no GameInfo teams to create')
+        game.WorldInfo.NetMode = 2
+        game.CreateTeam = None
+        ns['initialize_teams'](game, None, None, None)
+        self.assertEqual(len(ns['errors']), 1, 'an error is logged, travel goes on')
 
 
 if __name__ == '__main__': unittest.main()

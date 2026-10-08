@@ -10,8 +10,9 @@ from types import SimpleNamespace
 source = Path(__file__).resolve().parents[1] / 'unlimited_coop'
 tree = ast.parse((source/'__init__.py').read_text())
 FUNCTIONS = ('parse_patch', 'fail', 'apply_target', 'report', 'snapshot', 'apply_service', 'pass_steps',
-             'run_step', 'apply_patch', 'start_pass', 'invalidate', 'tick')
-CONSTANTS = ('HOTFIX', 'TYPED', 'TARGETS', 'CORE', 'CHECK_INTERVAL', 'FOLLOW_UP_MAX', 'INVALIDATE_BURST')
+             'run_step', 'apply_patch', 'start_pass', 'invalidate', 'tick', 'is_host')
+CONSTANTS = ('HOTFIX', 'TYPED', 'TARGETS', 'CORE', 'CHECK_INTERVAL', 'FOLLOW_UP_MAX', 'INVALIDATE_BURST',
+             'VEHICLE_TWEAKS')
 chosen = []
 for node in tree.body:
     if isinstance(node, ast.FunctionDef) and node.name in FUNCTIONS:
@@ -60,7 +61,8 @@ RECORDS = [dict(target='GameInfo', prop='MaxPlayers', value='4', hotfix=None),
 
 def load(records=RECORDS):
     ns = dict(re=re, json=json, RECORDS=records, __version__='test', SOURCE_SHA256='sha',
-              logging=SimpleNamespace(info=lambda *_: None))
+              logging=SimpleNamespace(info=lambda *_: None),
+              stand_on_vehicles=SimpleNamespace(value=False), any_vehicle_station=SimpleNamespace(value=False))
     exec(code, ns)
     ns['COMMANDS'] = [f"set {r['target']} {r['prop']} {r['value']}" for r in records]
     return ns
@@ -89,12 +91,16 @@ class SchedulingTests(unittest.TestCase):
             ns['_service_status'] = dict(status='registered')
 
         self.teams = []
+        self.vehicles = []
 
         def apply_teams(pc):  # team assignment itself is covered by test_teams
             self.teams.append(pc)
+
+        def apply_vehicles(_pc, cls):  # the vehicle step itself is covered by test_vehicles
+            self.vehicles.append(cls)
         ns.update(time=SimpleNamespace(monotonic=lambda: self.clock[0]), resolve=resolve,
                   controller=lambda: self.pc, register_hotfixes=register_hotfixes, apply_teams=apply_teams,
-                  SETTINGS_DIR=Path(tmp.name))
+                  apply_vehicles=apply_vehicles, SETTINGS_DIR=Path(tmp.name))
 
     def test_targets_group_every_record_once(self):
         records = load()['parse_patch']((source/'cooppatch.txt').read_text())
@@ -188,6 +194,39 @@ class SchedulingTests(unittest.TestCase):
         ns['invalidate']()
         ns['apply_patch']()
         self.assertEqual(len(self.pc.commands), 9, 'a later map change re-applies everything')
+
+    def test_vehicle_steps_follow_options(self):
+        ns = self.ns
+        self.assertNotIn('ChassisDefinition', self.start(0), 'options off: no scans, even in a full pass')
+        ns['stand_on_vehicles'].value = True
+        self.assertEqual(self.start(1), ['apply_teams', 'GD_Late.Formula', 'ChassisDefinition', 'report'],
+                         'an option change brings its class into the next light pass')
+        self.assertNotIn('ChassisDefinition', self.start(1.5), 'not again in light passes')
+        self.assertIn('ChassisDefinition', self.start(2), 'full passes scan while the option is on')
+        ns['stand_on_vehicles'].value = False
+        ns['_vehicle_stock']['ChassisDefinition'] = {'GD.Chassis': dict(AllowPawnsToStandOnTopOfVehicle=False)}
+        self.assertIn('ChassisDefinition', self.start(3), 'turned off: one step restores the stock values')
+        ns['_vehicle_stock']['ChassisDefinition'].clear()
+        self.assertNotIn('ChassisDefinition', self.start(6), 'nothing to restore: no scans')
+        ns['any_vehicle_station'].value = True
+        self.assertEqual(self.start(7)[-4:-1], ['VehicleSpawnStationGFxDefinition', 'VSSUIDefinition',
+                                                'VehicleFamilyDefinition'])
+
+    def test_client_runs_only_vehicle_steps(self):
+        self.pc.WorldInfo.NetMode = 3
+        self.pc.WorldInfo.Game = None
+        tick = self.ns['tick']
+        for _ in range(3):
+            tick(self.pc, None, None, None)
+        self.assertEqual((self.resolved, self.teams, self.vehicles, self.pc.commands), ([], [], [], []))
+        self.ns['any_vehicle_station'].value = True
+        self.clock[0] += 2
+        for _ in range(5):
+            tick(self.pc, None, None, None)
+        self.assertEqual(self.vehicles, ['VehicleSpawnStationGFxDefinition', 'VSSUIDefinition', 'VehicleFamilyDefinition'])
+        self.assertEqual((self.resolved, self.teams, self.pc.commands), ([], [], []),
+                         'no patch commands or teams on a client')
+        self.assertFalse(self.dest.exists(), 'no diagnostics on a client')
 
     def test_snapshot_written_only_on_change(self):
         ns = self.ns

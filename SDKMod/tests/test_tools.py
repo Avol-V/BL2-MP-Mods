@@ -105,9 +105,12 @@ class InstallerTests(unittest.TestCase):
                 component.parent.mkdir(parents=True, exist_ok=True)
                 component.write_bytes(b'fixture')
             self.assertEqual(installer.validate_game(self.root, True), [relative])
-            (self.root / 'sdk_mods/unlimited_coop-1.1.0.sdkmod').write_bytes(b'duplicate')
-            with self.assertRaises(ValueError):
-                installer.validate_game(self.root, True)
+            for name in ('unlimited_coop-1.1.0.sdkmod', 'unlimited_coop.sdkmod'):
+                packed = self.root / 'sdk_mods' / name
+                packed.write_bytes(b'duplicate')
+                with self.assertRaises(ValueError):
+                    installer.validate_game(self.root, True)
+                packed.unlink()
 
 
 class PackageTests(unittest.TestCase):
@@ -118,6 +121,15 @@ class PackageTests(unittest.TestCase):
             self.assertEqual(first['sha256'], second['sha256'])
             with zipfile.ZipFile(Path(output) / first['archive']) as archive:
                 self.assertEqual(set(archive.namelist()), {f'unlimited_coop/{name}' for name in installer.MOD_FILES})
+
+    def test_archive_name_matches_its_single_root_folder(self):
+        # The SDK mod manager (sdk_mods/__main__.py, validate_file_in_mods_folder) ignores a .sdkmod
+        # unless it holds exactly one root entry named like the archive without its extension.
+        with tempfile.TemporaryDirectory() as output:
+            path = Path(output) / builder.build(output)['archive']
+            roots = list(zipfile.Path(path).iterdir())
+            self.assertEqual([root.name for root in roots], [path.stem])
+            self.assertTrue(roots[0].is_dir())
 
 
 if __name__ == '__main__':

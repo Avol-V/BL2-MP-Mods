@@ -1,4 +1,5 @@
-"""Robeth v0.18 settings + team assignment through the PickTeam hook, with load-aware application.
+"""Robeth v0.18 settings + team assignment through the PickTeam hook, with load-aware application,
+and optional vehicle tweaks from NoCap.
 
 Experimental: runtime readback is not evidence of a successful fifth connection.
 No package or executable offsets are used. Disabling requires a game restart.
@@ -12,7 +13,7 @@ from pathlib import Path
 import unrealsdk
 from unrealsdk import logging
 from unrealsdk.hooks import Block, Type
-from mods_base import ENGINE, build_mod, hook, open_in_mod_dir, RestartToDisable, SpinnerOption
+from mods_base import ENGINE, BoolOption, build_mod, hook, open_in_mod_dir, RestartToDisable, SpinnerOption
 from mods_base.settings import SETTINGS_DIR
 
 __version__: str
@@ -76,6 +77,26 @@ team_mode = SpinnerOption(
                 ' Above four, Squads of 4 puts each next four players in their own team, and everyone'
                 ' sees their own team in the ally panel. No teams leaves everyone without a team, like'
                 ' the original patch: no ally panel.')
+# Vehicle tweaks from NoCap (c) 2024-2025 stealmyhousekey, GPL-3.0, as two options, off by default.
+stand_on_vehicles = BoolOption(
+    'Stand on vehicles', False,
+    description='Players can stand on top of every vehicle, not only on the Sand Skiff and Fan Boat, so more'
+                ' players ride along. Players without this mod stay on but jitter slightly.'
+                ' From NoCap by stealmyhousekey.')
+any_vehicle_station = BoolOption(
+    'Any vehicle at any station', False,
+    description='Catch-A-Ride stations offer every vehicle family, such as the Sand Skiff and Fan Boat at'
+                ' main-game stations. Unlocking is unchanged. Only players with this mod see the extra vehicles.'
+                ' From NoCap by stealmyhousekey.')
+# Values per definition class while its option is on. Tags are VSSUIDefinition.EVehicleSpawnStationAvailability:
+# 0 Land, 1 Desert, 2 Ice, 4 Wheeled, 20 BL2Main. Every station turns into a main-game station, and every
+# vehicle requires only what such a station supports.
+VEHICLE_TWEAKS = {
+    'ChassisDefinition': (stand_on_vehicles, dict(AllowPawnsToStandOnTopOfVehicle=True)),
+    'VehicleSpawnStationGFxDefinition': (any_vehicle_station, dict(RequiredTags=[20], SupportedTags=[0, 4])),
+    'VSSUIDefinition': (any_vehicle_station, dict(RequiredTags=[0, 20], SupportedTags=[0, 1, 2])),
+    'VehicleFamilyDefinition': (any_vehicle_station, dict(RequiredTags=[0, 20], SupportedTags=[0, 1, 2])),
+}
 _seen = {}
 _rows = {}
 _core = {}
@@ -94,6 +115,10 @@ _last_service_status = None
 _teams_status = {'status': 'pending'}
 _last_teams_status = None
 _player_class = None
+_squad_teams = set()
+_vehicle_options = None
+_vehicle_stock = {}
+_vehicles_status = {}
 
 
 def register_hotfixes():
@@ -144,13 +169,18 @@ def resolve(target):
 
 
 def controller():
+    """The local player's controller, on a client too: vehicle options apply there, nothing else does."""
     players = ENGINE.GamePlayers
     if not players or players[0] is None:
         return None
     pc = players[0].Actor
-    if pc is None or pc.WorldInfo is None or int(pc.WorldInfo.NetMode) == 3:
+    if pc is None or pc.WorldInfo is None:
         return None
     return pc
+
+
+def is_host(pc):
+    return int(pc.WorldInfo.NetMode) != 3
 
 
 def snapshot(pc):
@@ -158,6 +188,7 @@ def snapshot(pc):
     global _last_report
     report = dict(version=__version__, world=pc.WorldInfo._path_name(), map=pc.WorldInfo.GetMapName(True), net_mode=int(pc.WorldInfo.NetMode),
                   source_sha256=SOURCE_SHA256, pick_team_calls=_pick_calls, teams=_teams_status,
+                  vehicles=dict(_vehicles_status),
                   hotfix_service=_service_status, core={cls: _core.get(cls, []) for cls in CORE},
                   records=[_rows[i] for i in sorted(_rows)],
                   caveat='Pending targets are not applied. Readback is not a 5+ multiplayer test.')
@@ -305,8 +336,8 @@ def player_pris(game):
 
 
 def ensure_team(game, index):
-    """InitializeTeams creates teams 0 and 1, also in the new GameInfo after seamless travel; higher
-    teams are created on demand. Returns the team object for the index, if any."""
+    """InitializeTeams creates teams 0 and 1; higher teams are created on demand, and on seamless
+    travel by initialize_teams. Returns the team object for the index, if any."""
     if index > AI_TEAM and (len(game.Teams) <= index or game.Teams[index] is None):
         game.CreateTeam(index, f'Squad {index}')
     return game.Teams[index] if index < len(game.Teams) else None
@@ -314,7 +345,7 @@ def ensure_team(game, index):
 
 def needs_move(game, pri, index):
     """Also true for the right index on a stale team object: seamless travel carries squad teams
-    over, but the new GameInfo does not list them."""
+    over, and the new GameInfo lists them only if initialize_teams created them."""
     if index is None:
         return pri.Team is not None
     return team_index(pri) != index or pri.Team != (game.Teams[index] if index < len(game.Teams) else None)
@@ -323,15 +354,17 @@ def needs_move(game, pri, index):
 def apply_teams(pc):
     """Move players to the teams plan_teams chooses. Players leave teams before others join, and
     nobody joins a team that already holds TEAM_LIMIT players, so no HUD sees more than three
-    allies even between two moves."""
-    global _teams_status, _last_teams_status
+    allies even between two moves. Remembers the squad teams in use for initialize_teams."""
+    global _teams_status, _last_teams_status, _squad_teams
     game = pc.WorldInfo.Game
     if game is None:
         return
     mode = team_mode.value
     try:
         pris = player_pris(game)
-        plan = plan_teams([team_index(p) for p in pris], mode)
+        current = [team_index(p) for p in pris]
+        plan = plan_teams(current, mode)
+        _squad_teams = {i for i in current + plan if i is not None and i > AI_TEAM}
         moves = [(p, i) for p, i in zip(pris, plan) if needs_move(game, p, i)]
         moves.sort(key=lambda move: move[1] is not None)
         for pri, index in moves:
@@ -349,14 +382,83 @@ def apply_teams(pc):
         _last_teams_status = status
 
 
-def pass_steps(full):
+def plain(value):
+    """A property value as plain Python: arrays (of enum values) as lists of ints."""
+    return value if isinstance(value, (bool, int, float, str)) else [int(v) for v in value]
+
+
+def vehicle_writes(current, stock, tweak, on):
+    """Properties to write to one definition, and its stock values to keep afterwards (None: forget).
+
+    current: its values now; stock: the values kept when the option was turned on, if any. While
+    the option is on the tweak is written; once it is off the stock values are written back.
+    """
+    if on:
+        return {p: v for p, v in tweak.items() if current[p] != v}, current if stock is None else stock
+    return {p: v for p, v in (stock or {}).items() if current[p] != v}, None
+
+
+def apply_definition(obj, cls, on):
+    """Write the tweak (on) or the kept stock values (off) to one definition and read it back.
+    Returns its stock values while it is tweaked, None once they are restored."""
+    tweak = VEHICLE_TWEAKS[cls][1]
+    kept = _vehicle_stock.setdefault(cls, {})
+    path = obj._path_name()
+    writes, stock = vehicle_writes({p: plain(getattr(obj, p)) for p in tweak}, kept.get(path), tweak, on)
+    for prop, value in writes.items():
+        setattr(obj, prop, value)
+        if plain(getattr(obj, prop)) != value:
+            raise RuntimeError(f'Readback differs: {path}.{prop}')
+    if stock is None:
+        kept.pop(path, None)
+    else:
+        kept[path] = stock
+    return stock
+
+
+def apply_vehicles(_pc, cls):
+    """Apply one class of VEHICLE_TWEAKS to every loaded definition (a full GObjects scan).
+
+    Stations load their definitions with the map, DLC ones with DLC maps, so this runs in the
+    full passes after a map change; chassis load with each vehicle, see vehicle_spawned. Stock
+    values are kept by object path; once the option is off they are restored and forgotten: a
+    definition that is not loaded now loads again with stock values.
+    """
+    option, tweak = VEHICLE_TWEAKS[cls]
+    on = bool(option.value)
+    status = dict(on=on, loaded=0, changed=0)
+    try:
+        for obj in unrealsdk.find_all(cls):
+            if obj.Name.startswith('Default__'):
+                continue
+            stock = apply_definition(obj, cls, on)
+            status['loaded'] += 1
+            status['changed'] += stock is not None and stock != tweak
+        if not on:
+            _vehicle_stock.pop(cls, None)
+    except Exception as exc:
+        status['error'] = str(exc)
+    if status != _vehicles_status.get(cls):
+        logging.info(f'Unlimited COOP vehicles: {cls} {status}')
+    _vehicles_status[cls] = status
+
+
+def pass_steps(full, vehicles=False, host=True):
     """A full pass covers every target; otherwise only targets not yet read back (cheap object lookups).
-    Every pass checks teams: a few PRIs, and a join or leave must not wait for a full pass."""
+    Every pass checks teams: a few PRIs, and a join or leave must not wait for a full pass.
+
+    Vehicle definitions are scanned in full passes and after a vehicle option change, only while
+    their option is on or stock values wait to be restored. A client runs nothing else.
+    """
+    steps = [(apply_vehicles, cls) for cls, (option, _) in VEHICLE_TWEAKS.items()
+             if (full or vehicles) and (option.value or _vehicle_stock.get(cls))]
+    if not host:
+        return steps
     targets = [t for t, indices in TARGETS.items()
                if full or any(_rows.get(i, {}).get('status') != 'read_back' for i in indices)]
     service = full or _service_status.get('status') != 'registered'
     return (([(apply_service,)] if service else []) + [(apply_teams,)] + [(apply_target, t) for t in targets]
-            + [(report,)])
+            + steps + [(report,)])
 
 
 def run_step(pc, step):
@@ -368,7 +470,7 @@ def apply_patch():
     pc = controller()
     if pc is None:
         return
-    for step in pass_steps(True):
+    for step in pass_steps(True, host=is_host(pc)):
         run_step(pc, step)
 
 
@@ -377,8 +479,9 @@ def start_pass(pc):
 
     Triggers are map changes and player-count changes. In a five-player session every readback
     error (EffectiveNumPlayers, AdjustedNetSpeed recomputed by the game) followed a join or leave.
+    A vehicle option change brings the vehicle steps into the next pass.
     """
-    global _next_check, _next_full, _full_delay, _world, _players
+    global _next_check, _next_full, _full_delay, _world, _players, _vehicle_options
     world = (pc.WorldInfo._path_name(), pc.WorldInfo._get_address(), pc.WorldInfo.GetMapName(True))
     game = pc.WorldInfo.Game
     players = None if game is None else game.NumPlayers
@@ -394,7 +497,9 @@ def start_pass(pc):
     if full:
         _next_full = now + _full_delay if _full_delay <= FOLLOW_UP_MAX else float('inf')
         _full_delay *= 2
-    _queue[:] = pass_steps(full)
+    options = tuple(option.value for option, _ in VEHICLE_TWEAKS.values())
+    vehicles, _vehicle_options = options != _vehicle_options, options
+    _queue[:] = pass_steps(full, vehicles, is_host(pc))
 
 
 @hook('WillowGame.WillowCoopGameInfo:PickTeam')
@@ -415,10 +520,46 @@ def pick_team(obj, args, _ret, _func):
         index = plan_teams([team_index(p) for p in player_pris(obj)] + [None], team_mode.value)[-1]
         if index is not None:
             ensure_team(obj, index)
+            if index > AI_TEAM:
+                _squad_teams.add(index)
     except Exception as exc:
         logging.error(f'Unlimited COOP: team choice failed, joining without a team: {exc}')
         index = None
     return Block, NO_TEAM if index is None else index
+
+
+@hook('WillowGame.WillowCoopGameInfo:InitializeTeams', Type.POST)
+def initialize_teams(obj, _args, _ret, _func):
+    """Create the squad teams in use before seamless travel in the new GameInfo.
+
+    Fast travel keeps the GameInfo and its teams: maps stream into the persistent Loader world.
+    Loading a game from the main menu is seamless travel to a new Loader world: PostSeamlessTravel
+    of the new GameInfo calls InitializeTeams (teams 0 and 1), then HandleSeamlessTravelPlayer
+    moves each player to the new GameInfo's team with their index, if the index is below
+    Teams.Length. With the squad teams created here, the game moves squads at once and with right
+    team sizes, instead of leaving them on stale teams until apply_teams. A missing team below the
+    length would make the game drop its players from their teams, so there are no gaps.
+    """
+    if int(obj.WorldInfo.NetMode) == 3 or not _squad_teams:
+        return
+    try:
+        for index in range(AI_TEAM + 1, max(_squad_teams) + 1):
+            ensure_team(obj, index)
+    except Exception as exc:
+        logging.error(f'Unlimited COOP: squad teams not created before travel: {exc}')
+
+
+@hook('WillowGame.WillowVehicle:PostBeginPlay', Type.POST)
+def vehicle_spawned(obj, _args, _ret, _func):
+    """Stand on vehicles for a new vehicle. Chassis definitions of player vehicles load with the
+    vehicle (GD_Runner_Streaming and the like), usually long after the passes of a map change."""
+    chassis = obj.ChassisDef
+    if chassis is None or not VEHICLE_TWEAKS['ChassisDefinition'][0].value:
+        return
+    try:
+        apply_definition(chassis, 'ChassisDefinition', True)
+    except Exception as exc:
+        logging.error(f'Unlimited COOP: Stand on vehicles not applied to {chassis._path_name()}: {exc}')
 
 
 def invalidate(*_):
@@ -451,7 +592,9 @@ def tick(obj, _args, _ret, _func):
         return
     if not _queue:
         start_pass(pc)
-    run_step(pc, _queue.pop(0))
+    if _queue:  # a client pass is empty while no vehicle option needs work
+        run_step(pc, _queue.pop(0))
 
 
-mod = build_mod(cls=RestartToDisable, hooks=[pick_team, map_ready, tick], on_enable=invalidate)
+mod = build_mod(cls=RestartToDisable, options=[team_mode, stand_on_vehicles, any_vehicle_station],
+                hooks=[pick_team, initialize_teams, vehicle_spawned, map_ready, tick], on_enable=invalidate)

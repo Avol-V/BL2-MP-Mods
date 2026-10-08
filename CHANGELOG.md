@@ -1,6 +1,17 @@
 # Changelog
 
-## 1.3.0 — unreleased
+## 1.4.0 — October 8, 2026
+
+Keeps squads when a game is loaded from the main menu, adds two optional vehicle tweaks from NoCap and fixes the packed archive name. Patch data and hotfix registration are unchanged. Tested alone and with two players; more than two players, including real squads, are untested.
+
+- Squad teams (2, 3, …) are now created in the new GameInfo when a game is loaded from the main menu, as NoCap does in InitializeTeams. The game then moves each squad into its new team itself, at once and with correct team sizes. Fast travel, including to DLC maps, keeps the GameInfo and its teams (maps stream into the persistent Loader world), so squads already survived it. Checked with a probe that planned both players into team 2: the host was moved by the game at once; a client still loading was moved by the mod's next pass 0.1 s later; the ally panel showed on both screens.
+- New option **Stand on vehicles**, off by default: players can stand on top of every vehicle, not only on the Sand Skiff and Fan Boat. Player vehicles load their chassis definitions with the vehicle, so the option is applied when each vehicle spawns. The host stood on the Runner and Technical; a client without the mod stayed on a Technical driven fast, with slight jitter.
+- New option **Any vehicle at any station**, off by default: Catch-A-Ride stations offer every vehicle family. At a main-game station the host saw the Sand Skiff and Fan Boat next to the Runner and Technical and spawned a Fan Boat; a client without the mod sees the stock list. Unlock requirements and previews are unchanged (NoCap removes the Technical's mission requirement and replaces the Sand Skiff preview). Station definitions are updated after every map change, because DLC stations load with DLC maps. DLC stations are untested: the test character had not unlocked them.
+- Turning a vehicle option off restores the stock values. Vehicle definitions are scanned only while an option is on, in the passes after a map change, one class per frame. The vehicle options also work for a client who installs the mod; nothing else runs on a client.
+- The archive is now SDKMod/dist/unlimited_coop.sdkmod. The SDK imports a .sdkmod only if its single root folder has the archive's name, so the earlier unlimited_coop-<version>.sdkmod was ignored. The version stays in pyproject.toml and the build manifest. The archive alone loaded and ran in the game.
+- The vehicle options are adapted from NoCap 0.2.2, © 2024–2025 stealmyhousekey, GPL-3.0.
+
+## 1.3.0 — October 8, 2026, no separate release
 
 Restores the HUD ally panel. Patch data and hotfix registration are unchanged. Tested with two players: the ally panel appears for both on join and survives travel, option switches, and a rejoin. More than two players, including squads, are untested.
 

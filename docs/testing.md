@@ -55,6 +55,24 @@ Same game and SDK builds, folder installation, host plus one client on a separat
 
 More than two players, squads, and the No teams mode above four players are untested.
 
+## Version 1.4.0 (October 8, 2026)
+
+Same game and SDK builds, folder installation unless noted, a disposable level 30 character. Teams were forced into squad team 2 by a probe that replaced the mod's team plan, travel events and vehicle state were logged by probes, and players checked both screens.
+
+| Scenario | Result |
+|---|---|
+| Fast travel, also to a DLC map (Oasis), host alone | The GameInfo, its teams and the players' PRIs are kept: maps stream into the persistent Loader world. InitializeTeams and HandleSeamlessTravelPlayer are not called; team 2 stays as it was |
+| Load from the main menu, host in team 2 | Seamless travel to a new Loader world: InitializeTeams creates team 2 in the new GameInfo, HandleSeamlessTravelPlayer moves the host into it, no later team changes |
+| Same with a client who joined the menu lobby | The client joined straight into team 2. After loading, the host was moved by the game at once; the client, still loading, by the mod's next pass 0.1 s later, then nothing was left for the game. Ally panel on both screens |
+| Debug command openl from a loaded map | The game crashed 3 s later in native Skill.AdjustModifiers, also with no squads, probes or vehicle options. Not used in normal play; not checked without the mod |
+| Vehicle options switched by a probe and in the Mods menu | Applied on the next frame and saved; turning them off restored the stock values exactly |
+| Any vehicle at any station, main-game station (Three Horns Divide) | Host: Bandit Technical, Runner, Sand Skiff, Fan Boat; spawned a Fan Boat (2 seats), Technical (4) and Runner (2). Option off: Technical and Runner. A client without the mod sees Technical and Runner |
+| Stand on vehicles | The host stands on the Runner and Technical and slides off with the option off. A client without the mod stays on the host's Technical, also driven fast, with slight jitter: the client's game drops the vehicle as its base and the host restores it every 1–3 s |
+| DLC station (Oasis) | Untested: the test character had not unlocked it. Its station definition loads with the map and was updated |
+| Packed archive alone, no folder | Loaded, enabled, applied the patch and wrote diagnostics; the installer refuses a folder installation next to it |
+
+Not tested: more than two players, real squads (five or more), DLC stations with the vehicle options, NoCap's issue #1 (lost controls after a "no vehicles" message at a DLC station).
+
 ## Known issues
 
 **One host restart froze when the first client joined.** Last sample: NumPlayers=2, EffectiveNumPlayers=2 instead of 4 (two records), AdjustedNetSpeed=7000 instead of 5000. Diagnostics stopped updating. Logs were preserved and the process stopped. A fresh run of the unchanged mod accepted all five. These mismatches do not establish the freeze cause. Short-lived readback errors during successful play followed every join (EffectiveNumPlayers twice, AdjustedNetSpeed) or leave (one error), values the game recomputes, and cleared on the next poll.
@@ -65,12 +83,12 @@ More than two players, squads, and the No teams mode above four players are unte
 
 **No ally panel up to 1.2.0.** The HUD panel only shows teammates, and these versions left the host alone in team 0 and clients without a team. 1.3.0 assigns teams; tested with two players.
 
-- Five players tested with 1.1.0, two with 1.2.0; six or more, advertised 64/512 capacities, long-term stability, and interactions with other gameplay mods are untested.
+- Five players tested with 1.1.0, two with 1.2.0 to 1.4.0; six or more, advertised 64/512 capacities, long-term stability, and interactions with other gameplay mods are untested.
 - Five-player DLC play remains unverified; solo DLC loading does not substitute.
 - No unique Micropatch service means pending hotfix registration. Offline service creation was not implemented/verified. Do not repeatedly reconnect to force it.
 - Original Players=99 in one KillSkillDuration expression is retained; its gameplay implications were not independently validated.
 - Disabling needs a restart. Game copies share default saves/config; testing used disposable characters.
-- Public installer/launcher/package tools were prepared and checked offline after the game test. For 1.1.0, runtime logic was imported without behavioral changes; the packed archive has not been tested in-game.
+- Public installer/launcher/package tools were prepared and checked offline after the game test. For 1.1.0, runtime logic was imported without behavioral changes. Up to 1.3.0 the packed archive was named unlimited_coop-<version>.sdkmod and the SDK ignored it; since 1.4.0 it loads, tested alone.
 
 ## Reproduce/report
 
