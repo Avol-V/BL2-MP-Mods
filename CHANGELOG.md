@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.6.0 — October 9, 2026
+
+Adds a Reload map button for the host: it resets the current map as a save-quit does, and nobody is dropped. Patch data, balance and teams are unchanged. Tested alone and with two players.
+
+- **New button Reload map** in Mods → Unlimited COOP, for a map where a mission is stuck: an enemy that does not spawn, a scripted event that does not fire, a mission item out of reach. After the host closes the menu, everyone travels to a fast travel station the host has discovered in another main-game map, then back to the station a save-quit would return to. Enemies, chests, vendors and scripted events of the map start over, as after a save-quit; missions, inventories and the other maps keep their state. With two players it took 8 s; the client saw two short loading screens.
+- Why travel alone does not reset a map: the game keeps a memory of every level visited in a session, which outlives travel and is empty in the main menu. Population trackers hold the spawned, killed and looted actors; the Kismet bank holds event trigger counts and Matinee positions. On the other map the mod drops the Kismet entries of the map being reloaded and sets bTotalResetOnLevelLoad on the population definitions and their class defaults, so the map forgets its population state while it loads. Once it has loaded, the stock values are put back: the values from before, and for definitions first loaded meanwhile, the game data (73 population definitions set the flag there). Normal travel keeps the stock behaviour. Checked in game: enemies killed before a reload were back, including ones that never respawn; afterwards every definition and class default had its stock value; the other map kept its state.
+- The travel back waits until every player is alive and has reported the other map loaded (ServerUpdateLevelVisibility). The start uses the game's own travel check: if someone is busy (a menu open, down, saving), the game names them to every player and nothing happens. Only the host can reload, with another discovered main-game fast travel station, and only on the map a save-quit would return to. If anything goes wrong (a timeout, an error, quitting to the menu), the stock values are restored.
+- The idea of reloading a map without a save-quit comes from Co-op Save Quit by web; no code was taken from it.
+
+Unchanged cooppatch.txt SHA256:
+804f7f740ee2c1d0c5ca6a1e9dec5cbce4c9a6d3c7cf09407ff1c3b56b9712da
+
 ## 1.5.0 — October 8, 2026
 
 Up to four players the game is balanced as without the mod; above four, enemies get tougher per player and, optionally, more numerous. The network settings of the original patch apply only above four players and are no longer saved to the game's ini files. No hotfixes are registered any more. Tested alone and with two players; more than four players were simulated by a probe that made the mod count five, six or eight players.

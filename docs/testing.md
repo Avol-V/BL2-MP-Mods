@@ -92,6 +92,21 @@ Same game and SDK builds, folder installation, a disposable level 30 character i
 
 Not tested: more than two real players, enemies actually spawned above four players (health bars, den counts, missions with More enemies), UVHM (by the game data the stock playthrough attribute does not count a third playthrough, so UVHM takes the second-playthrough branches), DLC tables (witch doctors, Son of Crawmerax, wedding badasses, summoners: not loaded on the tested maps).
 
+## Version 1.6.0 (October 9, 2026)
+
+Same game and SDK builds, folder installation, the disposable level 30 character on Three Horns Divide (Ice_P). Its first discovered main-game station in another map is Claptrap's Place (Windshear Waste, Glacial_P). A probe killed every enemy near the station and compared the map's population trackers before the kill and after a reload; another probe compared every loaded population definition with the game data.
+
+| Scenario | Result |
+|---|---|
+| Fast travel away and back, no reload | The map's trackers kept their saved state: opportunities that never respawn, and those still waiting for their respawn delay, stayed empty |
+| Main menu | The Kismet bank and the population trackers are empty: a save-quit forgets the session state of every map. The reload forgets only the current map's |
+| Reload alone, from the Mods menu | Waited while the menus were open, started when they closed. To Glacial_P, back 3.5 s after arriving, done 7.5 s after the start. All 28 opportunities that had actors before the kill had them again, including 5 that never respawn. Afterwards every loaded population definition and both class defaults had their game-data values, and the trackers their stock flags |
+| Reload with two players | The client reported Glacial_P loaded before the travel back; 8 s in total. The client saw two short loading screens, no freeze or disconnect, and landed with the host on Ice_P; the same reset as alone |
+| Client's inventory open | Refused: the game told both players who was in a menu, the host got the mod's message, nobody travelled |
+| Travel back too early | A first build started the travel back before the other map had loaded; the game ignored it, the reload stopped after 90 s and restored the stock values |
+
+Not tested: defend waves (population encounters) after a reload, reloads on DLC maps and in Sanctuary, more than two players, a client loading much slower than the host.
+
 ## Known issues
 
 **One host restart froze when the first client joined.** Last sample: NumPlayers=2, EffectiveNumPlayers=2 instead of 4 (two records), AdjustedNetSpeed=7000 instead of 5000. Diagnostics stopped updating. Logs were preserved and the process stopped. A fresh run of the unchanged mod accepted all five. These mismatches do not establish the freeze cause. Short-lived readback errors during successful play followed every join (EffectiveNumPlayers twice, AdjustedNetSpeed) or leave (one error), values the game recomputes, and cleared on the next poll. Since 1.5.0 EffectiveNumPlayers=2 with two players is intended and AdjustedNetSpeed is not set.
@@ -104,7 +119,7 @@ Not tested: more than two real players, enemies actually spawned above four play
 
 **No ally panel up to 1.2.0.** The HUD panel only shows teammates, and these versions left the host alone in team 0 and clients without a team. 1.3.0 assigns teams; tested with two players.
 
-- Five players tested with 1.1.0, two with 1.2.0 to 1.5.0; six or more, advertised 64/512 capacities, long-term stability, and interactions with other gameplay mods are untested.
+- Five players tested with 1.1.0, two with 1.2.0 to 1.6.0; six or more, advertised 64/512 capacities, long-term stability, and interactions with other gameplay mods are untested.
 - Five-player DLC play remains unverified; solo DLC loading does not substitute.
 - The balance above four players (tougher and more enemies) was checked by values only, with the mod counting more players than were present; how it plays with five or more players is untested.
 - Up to 1.4.0, without a unique Micropatch service hotfix registration stayed pending. 1.5.0 registers no hotfixes.

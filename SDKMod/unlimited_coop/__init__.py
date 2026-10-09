@@ -1,6 +1,6 @@
 """Robeth v0.18 lobby and network settings, team assignment through the PickTeam hook, balance by player
 count (as in the unmodified game up to four players, continued above four), with load-aware application,
-and optional vehicle tweaks from NoCap.
+optional vehicle tweaks from NoCap, and a map reload for the host.
 
 Experimental: runtime readback is not evidence of a successful fifth connection.
 No package or executable offsets are used. Disabling requires a game restart.
@@ -14,9 +14,10 @@ from pathlib import Path
 import unrealsdk
 from unrealsdk import logging
 from unrealsdk.hooks import Block, Type
-from mods_base import (ENGINE, BoolOption, build_mod, hook, open_in_mod_dir, RestartToDisable, SliderOption,
-                       SpinnerOption)
+from mods_base import (ENGINE, BoolOption, build_mod, ButtonOption, hook, open_in_mod_dir, RestartToDisable,
+                       SliderOption, SpinnerOption)
 from mods_base.settings import SETTINGS_DIR
+from ui_utils import show_hud_message
 
 __version__: str
 __version_info__: tuple[int, ...]
@@ -157,6 +158,95 @@ VEHICLE_TWEAKS = {
     'VSSUIDefinition': (any_vehicle_station, dict(RequiredTags=[0, 20], SupportedTags=[0, 1, 2])),
     'VehicleFamilyDefinition': (any_vehicle_station, dict(RequiredTags=[0, 20], SupportedTags=[0, 1, 2])),
 }
+reload_map = ButtonOption(
+    'Reload map', on_press=lambda _option: request_reload(),
+    description='Host only, in a game. Reloads the map you are in as a save-quit does, and nobody is dropped:'
+                ' after you close the menu everyone travels to a fast travel station you have discovered in'
+                ' another map and back. Enemies, chests, vendors and scripted events of this map start over,'
+                ' as after a save-quit; missions and the other maps keep their state.')
+# Map reload. The game keeps a memory of every level visited in a session in two engine singletons
+# that outlive travel and are empty in the main menu, which is why a save-quit brings enemies, loot and
+# scripted events back and travel does not: population trackers (PopulationMaster.OpportunityList: the
+# spawned, killed and looted actors of each opportunity) and the Kismet bank
+# (PersistentGameDataManager.SequencesWithPersistentData: event trigger counts and Matinee positions by
+# level package). A level forgets its trackers' saved state if its population definitions have
+# bTotalResetOnLevelLoad when the level loads; the trackers' own copy of the flag is overwritten then.
+# Checked in game 2026-10-09: enemies killed before leaving were back after the return only with the
+# flag set while the map loaded, and the map left in between kept its state.
+POPULATION_CLASSES = ('PopulationDefinition', 'WillowPopulationDefinition')
+# Population definitions whose game data sets bTotalResetOnLevelLoad (BLCMM object dumps of BL2 with its
+# DLC; matched every loaded definition in game): the stock value of a definition that first loads while
+# the reload sets the flag. All others are False, as their class defaults.
+RESET_ON_LOAD = frozenset((
+    'GD_Allium_Lootables.Population.Pop_LootCar', 'GD_Anemone_AutoCannon.Population.PopDef_Anemone_AutoCannon',
+    'GD_Anemone_Hector.InteractiveObjects.Anemone_PoP_HectorDead',
+    'GD_Anemone_Hector.InteractiveObjects.Anemone_PoP_Hector_Flower',
+    'GD_Anemone_InfectedPodTendril.Population.PopDef_InfectedPodTendril_RespawnOnLoad',
+    'GD_Anemone_InfectedPod_Badass.Population.PopDef_InfectedPodTendril_Badass_SpawnOnLoad',
+    'GD_Anemone_Pop_Bandits.Population.PopDef_MarauderBadass_Leader',
+    'GD_Anemone_Pop_Bandits.Population.PopDef_NomadBadass_Leader',
+    'GD_Anemone_Pop_Cassius.GD_Anemone_PopDef_Cassius',
+    'GD_Anemone_Pop_Infected.Population.PopDef_InfectedBanditsMIX_Basic_RespawnOnLoad',
+    'GD_Anemone_Pop_Infected.Population.PopDef_InfectedGolem_RespawnOnLoad',
+    'GD_Anemone_Pop_Infected.Population.PopDef_InfectedMIX_Cavern_M030',
+    'GD_Anemone_Pop_Infected.Population.PopDef_InfectedMIX_OldDust_SpawnOnLoad',
+    'GD_Anemone_Pop_Infected.Population.PopDef_Infected_Gargantuan_SpawnOnLoad',
+    'GD_Anemone_Pop_NP.Population.PopDef_NPMIX_Grunts_M030', 'GD_Anemone_Pop_NP.Population.PopDef_NP_Lt_Angvar',
+    'GD_Anemone_Pop_NP.Population.PopDef_NP_Lt_Tetra',
+    'GD_Anemone_Pop_NP.Population.PopDef_NewPandoraMIX_Grunts_SpawnOnLoad',
+    'GD_Anemone_Pop_NP.Population.PopDef_SniperBase_M030',
+    'GD_Anemone_Pop_WildLife.Population.PopDef_SandWorm_Queen',
+    'GD_Anemone_Population_Treasure.Lootables.Brothers_Pile',
+    'GD_Anemone_Population_Treasure.Lootables.Infected_Flower_LootBulb',
+    'GD_Anemone_Population_Treasure.Lootables.ScrapPile',
+    'GD_Anemone_Population_Treasure.Lootables.StalkerPileCeiling_Infected',
+    'GD_Anemone_Population_Vehicles.Population.PopDef_Anemone_Technical_Mix',
+    'GD_Anemone_Side_SpaceCowboy.InteractiveObjects.Pop_ToiletMidget',
+    'GD_Anemone_StolenTurret.Balance.PopDef_Anemone_StolenTurret',
+    'GD_Aster_EridiumSlotMachine.Populations.Pop_EridiumSlotMachine',
+    'GD_Aster_Lootables.Balance.PopDef_DiceChestNoSaveState', 'GD_EasterEggs.Lootables.WhatsInTheBox',
+    'GD_ElectricFence.PopDef.Pop_ElectricalFenceBox', 'GD_Episode09Data.Populations.Pop_Ep9_DeployedBeacon',
+    'GD_Episode13Data.Populations.Pop_Ep13_EridiumHoseCoupling',
+    'GD_Episode13Data.Populations.Pop_Ep13_FirstEridiumHoseCoupling',
+    'GD_Flax_Lootables.Population.Pop_JackOLantern', 'GD_Flax_Lootables.Population.Pop_JackOLantern_Random',
+    'GD_Flax_Lootables.TreasureChests.CauldronChest_Red', 'GD_Iris_SlotMachine.Populations.Pop_Iris_SlotMachine',
+    'GD_Matchstick.Balance.PopDef_Matchstick', 'GD_Nasturtium_Lootables.InteractiveObjects.PopDef_NastChest_Ammo',
+    'GD_Nasturtium_Lootables.Population.Pop_EasterEgg', 'GD_Orchid_Hovercraft.AI.PopDef_Hovercraft_Rider',
+    'GD_Orchid_PlotDataMission04.Mission04.PopDef_Orchid_SandmanChest',
+    'GD_Orchid_Pop_Loader.Population.PopDef_Orchid_LoaderBadass_Caravan',
+    'GD_Orchid_Pop_RakkHive.Character.PopDef_Orchid_RakkHive',
+    'GD_Orchid_PopulationVehicles.Flatbed.PopDef_Caravan_Flatbed',
+    'GD_Orchid_SM_Scurvy_Data.Pop_Orchid_FruitTree1', 'GD_Orchid_SM_Scurvy_Data.Pop_Orchid_FruitTree2',
+    'GD_Orchid_TreasureChests.InteractiveObjects.PopDef_PirateChest_Ammo',
+    'GD_Orchid_TreasureChests.InteractiveObjects.PopDef_PirateChest_EndGame',
+    'GD_Population_Treasure.Lootables.BugMorphPile', 'GD_Population_Treasure.Lootables.BullymongPile',
+    'GD_Population_Treasure.Lootables.BullymongPile_AlwaysHealth',
+    'GD_Population_Treasure.Lootables.CrystalPile_1', 'GD_Population_Treasure.Lootables.ScrapPile',
+    'GD_Population_Treasure.Lootables.SkagPile', 'GD_Population_Treasure.Lootables.SpiderantPile',
+    'GD_Population_Treasure.Lootables.StalkerPileCeiling', 'GD_Population_Treasure.Lootables.StalkerPileGround',
+    'GD_Population_Treasure.Lootables.StalkerPilePillar',
+    'GD_Population_Treasure.LootablesTrap.BugMorph.ScrapPile_BugMorph',
+    'GD_Population_Treasure.LootablesTrap.MidgetHyperion.StalkerPileCeiling_MidgetHyperion',
+    'GD_Population_Treasure.LootablesTrap.MidgetHyperion.StalkerPilePillar_MidgetHyperion',
+    'GD_Population_Vehicles.Population.PopDef_CannonTurret',
+    'GD_Sage_Lootables.Balance.PopDef_HyperionChest_EndGame', 'GD_Sage_Pop_Drifter.Population.PopDef_DrifterRaid',
+    'GD_Sage_PopulationVehicles.VehicleCrew.PopDef_VehicleCrew',
+    'GD_Z1_HandsomeJackHereData.Lootables.BullymongPile_Echo', 'GD_Z2_TheBankJobData.Lootables.TheBankJob_Toilet',
+    'GD_Z3_UncleTeddyData.Lootables.CashBox_UncleTeddy',
+    'GD_Z3_UncleTeddyData.Lootables.Storage_Locker_UncleTeddy',
+    'GD_Z3_UncleTeddyData.Lootables.StrongBox_Recorder', 'gd_slotmachine.Populations.Pop_SlotMachine',
+))
+RELOAD_STEP = 0.5
+# Longest wait for each travel and for everyone to be ready on the other map.
+RELOAD_WAIT = 90.0
+# Wait for the populations of the home map to connect after the host arrives there.
+RELOAD_SETTLE = 10.0
+# Clients count as loaded once they report the other map visible (ServerUpdateLevelVisibility; in game the
+# host reports too). If the hook sees no report at all, clients get this long after the host arrives.
+RELOAD_GRACE = 20.0
+# Map names a station may stand for: a travel to Sanctuary_P lands in SanctuaryAir_P after the lift-off.
+MAP_ALIASES = {'sanctuary_p': 'sanctuaryair_p'}
+NOT_A_MAP = ('menumap', 'loader', 'fakeentry')
 # Experience shares and kill skill durations by player count in GD_Globals, loaded from the start. The
 # stock rows cover 1-4 players. The game picks the kill skill row by EffectiveNumPlayers (in game: 7 s
 # alone, 10 s with EffectiveNumPlayers 4 and one player); rows for 5-64 repeat the four-player row, in
@@ -234,6 +324,7 @@ _squad_teams = set()
 _vehicle_options = None
 _vehicle_stock = {}
 _vehicles_status = {}
+_reload = None
 
 
 def resolve(target):
@@ -763,6 +854,230 @@ def apply_vehicles(_pc, cls):
     _vehicles_status[cls] = status
 
 
+def say(text):
+    """A message on the local HUD, and in the SDK log."""
+    logging.info(f'Unlimited COOP reload: {text}')
+    try:
+        show_hud_message('Unlimited COOP', text, 6.0)
+    except Exception as exc:
+        logging.warning(f'Unlimited COOP: HUD message not shown: {exc}')
+
+
+def map_name(pc):
+    return str(pc.WorldInfo.GetMapName(False)).lower()
+
+
+def level_of(station):
+    level = str(station.GetStationLevelName()).lower()
+    return MAP_ALIASES.get(level, level)
+
+
+def ready(controller):
+    """A player that travel can take along: in the game with a living pawn, not joining or saving.
+    The game's CheckMapChangeConditions also checks this, but tells every player who is not."""
+    pawn = controller.Pawn
+    return (pawn is not None and pawn.IsAliveAndWell() and not controller.bIsInHolding
+            and str(controller.GetStateName()) != 'PlayerLobby' and not controller.PlayerReplicationInfo.bIsSaving)
+
+
+def arrived(pc, state):
+    """The host's travel is done: the map change is committed and the loading screen is gone. The map name
+    changes as soon as travel starts, and pawns are kept and moved."""
+    return state['commits'] > 0 and pc.Pawn is not None and not pc.IsLoadingMoviePlaying()
+
+
+def loaded(pc, controller, state, there, now):
+    """Whether a player has the map `there` loaded: the host once arrived, a client once it reports the map
+    visible, or RELOAD_GRACE after the host if the hook has seen no report at all."""
+    if controller == pc:
+        return True
+    shown = state['visible'].get(controller._get_address())
+    if shown is not None:
+        return there in shown
+    return not state['visible'] and now >= state['arrived'] + RELOAD_GRACE
+
+
+def pick_hop(pc, home):
+    """A fast travel station of another map that the host has discovered, in the main game (every player
+    has it) and not closed by a mission objective. Sanctuary is left out: its station names Sanctuary_P,
+    which the game may replace with the map the host is in."""
+    lookup = unrealsdk.find_class('WillowGlobals').ClassDefaultObject.GetWillowGlobals().GetFastTravelStationsLookup()
+    avoid = {map_name(pc), level_of(home)}
+    for name in pc.ActivatedTeleportersList:
+        station = lookup.FindFastTravelStationLookupObject(name)
+        if (station is not None and station.DlcExpansion is None and not station.bSendOnly
+                and station.InaccessibleObjective is None and level_of(station) not in avoid
+                and not level_of(station).startswith('sanctuary')):
+            return station
+    return None
+
+
+def population_master():
+    return unrealsdk.find_class('GearboxGlobals').ClassDefaultObject.GetGearboxGlobals().GetPopulationMaster()
+
+
+def population_definitions():
+    """Loaded population definitions (a full GObjects scan per class)."""
+    for cls in POPULATION_CLASSES:
+        for obj in unrealsdk.find_all(cls, True):
+            if not obj.Name.startswith('Default__'):
+                yield obj
+
+
+def connected_trackers():
+    """bTotalResetOnLevelLoad of the population trackers of the loaded levels, by opportunity."""
+    return {(str(t.OpportunityOutermostName), str(t.OpportunityName)): int(t.bTotalResetOnLevelLoad)
+            for t in population_master().OpportunityList if t.LoadedOpportunity is not None}
+
+
+def wipe_kismet(packages):
+    """Drop the Kismet bank entries of the given level packages; returns how many."""
+    dropped = 0
+    for bank in unrealsdk.find_all('PersistentGameDataManager', True):
+        if bank.Name.startswith('Default__'):
+            continue
+        entries = bank.SequencesWithPersistentData
+        for i in reversed(range(len(entries))):
+            if str(entries[i].LevelPackageName).lower() in packages:
+                entries.pop(i)
+                dropped += 1
+    return dropped
+
+
+def arm(state):
+    """Set bTotalResetOnLevelLoad on every loaded population definition and on the class defaults, which
+    definitions loading with the home map inherit; keep the values before by path."""
+    stock = state['defs']
+    for obj in population_definitions():
+        stock.setdefault(obj._path_name(), bool(obj.bTotalResetOnLevelLoad))
+        obj.bTotalResetOnLevelLoad = True
+    for cls in POPULATION_CLASSES:
+        default = unrealsdk.find_class(cls).ClassDefaultObject
+        state['defaults'].setdefault(cls, bool(default.bTotalResetOnLevelLoad))
+        default.bTotalResetOnLevelLoad = True
+    state['armed'] = True
+
+
+def disarm(state):
+    """Put back the stock values: the class defaults, every loaded definition (its value before, or for one
+    first loaded since, its game data), and the flag in the home map's trackers."""
+    if not state.get('armed'):
+        return
+    state['armed'] = False
+    for cls, value in state['defaults'].items():
+        unrealsdk.find_class(cls).ClassDefaultObject.bTotalResetOnLevelLoad = value
+    restored = 0
+    for obj in population_definitions():
+        path = obj._path_name()
+        value = state['defs'].get(path, path in RESET_ON_LOAD)
+        if bool(obj.bTotalResetOnLevelLoad) != value:
+            obj.bTotalResetOnLevelLoad = value
+            restored += 1
+    for t in population_master().OpportunityList:
+        value = state['trackers'].get((str(t.OpportunityOutermostName), str(t.OpportunityName)))
+        if value is not None and int(t.bTotalResetOnLevelLoad) != value:
+            t.bTotalResetOnLevelLoad = value
+    logging.info(f'Unlimited COOP reload: stock values back, {restored} definitions restored')
+
+
+def request_reload():
+    """The option button. The reload starts once the host is back in the game with the menus closed."""
+    global _reload
+    if _reload is None:
+        _reload = dict(stage='request', next=0.0, armed=False)
+
+
+def reload_request(pc, state, now):
+    if pc.IsPauseMenuOpen() or pc.PlayerReplicationInfo.bGFxMenuOpen:
+        return None
+    state['stage'] = 'done'
+    game = pc.WorldInfo.Game
+    if not is_host(pc) or game is None:
+        return 'Only the host can reload the map.'
+    home = pc.LastVisitedTeleporter
+    if home is None or level_of(home) != map_name(pc):
+        return 'Map reload: the game would bring you back to another map. Use a station of this map first.'
+    hop = pick_hop(pc, home)
+    if hop is None:
+        return 'Map reload needs a fast travel station you have discovered in another main-game map.'
+    if game.TravelCountdownInProcess() or not game.CheckMapChangeConditions():
+        return 'Map reload: wait until travel is possible for everyone, then try again.'
+    packages = {map_name(pc)} | {str(s.PackageName).lower() for s in pc.WorldInfo.StreamingLevels
+                                 if s is not None and s.LoadedLevel is not None}
+    state.update(stage='hop', home=home, hop=hop, home_map=map_name(pc), packages=packages, defs={}, defaults={},
+                 trackers=connected_trackers(), until=now + RELOAD_WAIT, seen=0, commits=0, arrived=None, visible={})
+    for obj in population_definitions():  # their stock values, before anything is changed
+        state['defs'][obj._path_name()] = bool(obj.bTotalResetOnLevelLoad)
+    game.TravelToStation(hop)
+    return f'Reloading the map: to {hop.StationDisplayName} and back.'
+
+
+def reload_hop(pc, state, now):
+    """On the other map with everyone loaded and ready, the home map is unloaded: forget its Kismet entries,
+    set the flag and go back. Two checks in a row, so the map has settled."""
+    game = pc.WorldInfo.Game
+    there = map_name(pc)
+    if state['arrived'] is None and arrived(pc, state) and there not in (state['home_map'], *NOT_A_MAP):
+        state['arrived'] = now
+    everyone = state['arrived'] is not None and all(ready(p.Owner) and loaded(pc, p.Owner, state, there, now)
+                                                    for p in player_pris(game))
+    state['seen'] = state['seen'] + 1 if everyone else 0
+    if state['seen'] < 2:
+        if now > state['until']:
+            state['stage'] = 'done'
+            return 'Map reload stopped: not everyone loaded the other map in time. Nothing was reset; travel back.'
+        return None
+    dropped = wipe_kismet(state['packages'])
+    arm(state)
+    logging.info(f"Unlimited COOP reload: {dropped} Kismet entries of {sorted(state['packages'])} dropped,"
+                 f" back after {now - state['arrived']:.1f} s on {there}; clients reported {len(state['visible'])}")
+    state.update(stage='home', until=now + RELOAD_WAIT, arrived=None, commits=0)
+    game.TravelToStation(state['home'])
+    return None
+
+
+def reload_home(pc, state, now):
+    """Back home: once its populations are connected again, put the stock values back."""
+    if map_name(pc) != state['home_map'] or not arrived(pc, state):
+        if now > state['until']:
+            state['stage'] = 'done'
+            return 'Map reload stopped: the map did not load in time. Stock values are back.'
+        return None
+    if state['arrived'] is None:
+        state['arrived'] = now
+    if now < state['arrived'] + RELOAD_SETTLE and not set(state['trackers']) <= set(connected_trackers()):
+        return None
+    state['stage'] = 'done'
+    return 'Map reloaded.'
+
+
+RELOAD_STAGES = dict(request=reload_request, hop=reload_hop, home=reload_home)
+
+
+def reload_step(pc, now):
+    """One step of the map reload. It ends with the stock values back, also on an error or in the menu."""
+    global _reload
+    state = _reload
+    state['next'] = now + RELOAD_STEP
+    try:
+        if map_name(pc) == 'menumap':
+            state['stage'] = 'done'
+            message = None
+        else:
+            message = RELOAD_STAGES[state['stage']](pc, state, now)
+    except Exception as exc:
+        state['stage'] = 'done'
+        message = f'Map reload failed: {exc}'
+    if state['stage'] == 'done':
+        _reload = None
+        try:
+            disarm(state)
+        except Exception as exc:
+            logging.error(f'Unlimited COOP: stock population values not restored: {exc}')
+    if message:
+        say(message)
+
+
 def pass_steps(full, vehicles=False, host=True):
     """A full pass covers every target; otherwise only targets not yet read back with the values wanted
     now (cheap object lookups), so an option change applies in the next pass. Every pass checks the
@@ -918,15 +1233,31 @@ def invalidate(*_):
 @hook('WillowGame.FrontendGFxMovie:Start', Type.POST)
 def map_ready(*_):
     invalidate()
+    if _reload is not None:
+        _reload['commits'] = _reload.get('commits', 0) + 1
+
+
+@hook('Engine.PlayerController:ServerUpdateLevelVisibility')
+def level_visible(obj, args, _ret, _func):
+    """A client reports a level it has made visible, on the host. During the map reload's first travel this
+    tells when a client has the other map loaded."""
+    if _reload is not None and _reload['stage'] == 'hop' and args.bIsVisible:
+        _reload['visible'].setdefault(obj._get_address(), set()).add(str(args.PackageName).lower())
 
 
 @hook('Engine.PlayerController:PlayerTick', Type.POST)
 def tick(obj, _args, _ret, _func):
     # One step per frame: a whole pass in one frame stalled the game thread for ~100 ms every 2 s.
-    if not _queue and time.monotonic() < _next_check:
+    now = time.monotonic()
+    reloading = _reload is not None and now >= _reload['next']
+    if not _queue and now < _next_check and not reloading:
         return
     pc = controller()
     if pc is None or obj != pc:
+        return
+    if reloading:
+        reload_step(pc, now)
+    if not _queue and now < _next_check:
         return
     if not _queue:
         start_pass(pc)
@@ -936,6 +1267,7 @@ def tick(obj, _args, _ret, _func):
 
 mod = build_mod(cls=RestartToDisable,
                 options=[team_mode, stronger_enemies, enemy_strength, more_enemies, instant_travel,
-                         stand_on_vehicles, any_vehicle_station],
-                hooks=[pick_team, initialize_teams, players_changed, vehicle_spawned, map_ready, tick],
+                         stand_on_vehicles, any_vehicle_station, reload_map],
+                hooks=[pick_team, initialize_teams, players_changed, vehicle_spawned, map_ready, level_visible,
+                       tick],
                 on_enable=invalidate)
